@@ -27,7 +27,6 @@ GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
-# Использование обычной быстрой модели вместо pro
 SINGLE_MODEL = 'gemini-3.1-flash-image'
 CREDIT_COST = 5
 
@@ -56,7 +55,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.send_text(json.dumps({
         "type": "text",
         "credits": initial_balance,
-        "text": "🎂 Добро пожаловать в студию макетов! Введите описание для чистого арта."
+        "text": "🎂 Добро пожаловать в студию макетов!"
     }))
 
     try:
@@ -90,7 +89,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await websocket.send_text(json.dumps({
                 "type": "text", 
                 "credits": current_balance,
-                "text": "🪄 Генерация чистого графического арта без текста..."
+                "text": "🪄 Генерация композиции для макета..."
             }))
             
             try:
@@ -104,22 +103,21 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     mime_type = file_obj.get('mimeType') or 'image/jpeg'
                     contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
                 
-                # ЖЕСТКИЕ ПРАВИЛА: Один объект, по центру, белый фон, строго без текста
+                # НОВЫЙ ТОЧНЫЙ ПРОМПТ ПОД СТИЛЬ ПРИМЕРА (ПЕРСОНАЖ + КЛИПАРТЫ ВОКРУГ)
                 strict_art_prompt = (
-                    f"Создай ОДИН ЕДИНСТВЕННЫЙ центральный графический элемент для кондитерского макета на тему: {prompt}. "
-                    f"КОМПОЗИЦИЯ: Строго по центру, изолированный объект на абсолютном чистом белом фоне. "
-                    f"НИКАКИХ коллажей, никаких паттернов, никаких множества разных предметов (никаких случайных сладостей или ассорти вокруг). "
-                    f"Только один главный гармоничный рисунок с чистыми краями. "
-                    f"СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, цифр или текста!"
+                    f"Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
+                    f"КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
+                    f"Вокруг него на светлом фоне (допускается легкая текстура тетрадной клетки или пастельный узор) аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты, относящиеся к теме. "
+                    f"Композиция сбалансирована для вписывания в круг. "
+                    f"СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, слов или текста на изображении!"
                 )
                 contents.append(strict_art_prompt)
 
                 config_params = types.GenerateContentConfig(
-                    system_instruction="Ты — профессиональный иллюстратор графики для кондитерских изделий. Создавай чистые изолированные иллюстрации. НИКОГДА не добавляй текст.",
+                    system_instruction="Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем и разбросанными вокруг тематическими мини-элементами на светлом фоне. НИКОГДА не добавляй текст.",
                     response_modalities=["TEXT", "IMAGE"]
                 )
                 
-                print(f"🚀 Запрос к модели {SINGLE_MODEL}...")
                 response = client.models.generate_content(
                     model=SINGLE_MODEL,
                     contents=contents,
@@ -153,7 +151,6 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                             elif isinstance(raw_bytes, str):
                                 image_data = raw_bytes
                             mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or 'image/jpeg'
-                            print(f"✅ Картинка успешно получена! Размер base64: {len(image_data)}")
 
                 if image_data:
                     response_payload = {
@@ -161,10 +158,9 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         "data": image_data,
                         "mimeType": mime_type,
                         "credits": current_balance,
-                        "text": "✨ Чистый графический арт успешно создан!"
+                        "text": "✨ Композиция успешно создана!"
                     }
                 else:
-                    print("⚠️ Модель не вернула картинку, возвращаем кредиты.")
                     requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
                     response_payload = {
                         "type": "text",
@@ -176,7 +172,6 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
 
             except Exception as e:
                 err_str = str(e)
-                print(f"❌ Ошибка генерации: {err_str}")
                 requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
                 await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
                 
