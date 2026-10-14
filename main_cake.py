@@ -27,7 +27,6 @@ GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
-# Единственная используемая модель
 SINGLE_MODEL = 'gemini-3-pro-image'
 CREDIT_COST = 5  # Стоимость генерации макета
 
@@ -203,12 +202,11 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             except Exception as e:
                 err_str = str(e)
                 print(f"❌ Ошибка генерации: {err_str}")
-                # Возвращаем кредит обратно при ошибке
                 add_credits_to_sheets(client_email, required_credits)
                 await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
                 
-        except WebSocketDisconnect:
-            print(f"Кондитер отключился.")
+    except WebSocketDisconnect:
+        print(f"Кондитер отключился.")
 
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
