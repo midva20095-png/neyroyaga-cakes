@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="NeiroYaga Supa Studio")
+app = FastAPI(title="NeiroYaga Vector Cake Editor")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,7 +47,7 @@ def check_and_deduct_credits(email: str, cost: int) -> dict:
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.accept()
-    print(f"🎨 Пользователь {client_email} подключился к студии SUPA!")
+    print(f"🎂 Кондитер {client_email} подключился к векторному редактору!")
     
     init_result = check_and_deduct_credits(client_email, 0)
     initial_balance = init_result.get("credits", 0)
@@ -55,27 +55,16 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.send_text(json.dumps({
         "type": "text",
         "credits": initial_balance,
-        "text": "✨ Добро пожаловать в дизайн-студию SUPA & НейроЯга! Выберите инструмент в панели управления, настройте параметры и создайте профессиональный визуальный контент."
+        "text": "🎂 Добро пожаловать в профессиональный конструктор макетов! Сгенерируйте чистый арт для торта и оформите макет векторным текстом."
     }))
 
     try:
         while True:
             raw_message = await websocket.receive_text()
+            data = json.loads(raw_message)
             
-            prompt = ""
-            file_obj = None
-            tool_type = "cake"
-            design_data = None
-            
-            try:
-                data = json.loads(raw_message)
-                if isinstance(data, dict):
-                    prompt = data.get('prompt', '')
-                    file_obj = data.get('file') 
-                    tool_type = data.get('tool_type', 'cake') # cake, social, story, presentation, banner
-                    design_data = data.get('design_data', {}) 
-            except json.JSONDecodeError:
-                prompt = raw_message
+            prompt = data.get('prompt', '')
+            file_obj = data.get('file')
 
             required_credits = CREDIT_COST
             credit_result = check_and_deduct_credits(client_email, required_credits)
@@ -93,136 +82,77 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await websocket.send_text(json.dumps({
                 "type": "text", 
                 "credits": current_balance,
-                "text": "🪄 Искусственный интеллект генерирует дизайн-макет..."
+                "text": "🪄 Генерация чистого графического арта без текста..."
             }))
             
             try:
                 contents = []
-                
-                if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
+                if file_obj and file_obj.get('data'):
                     img_data = file_obj.get('data')
                     if ',' in img_data:
                         img_data = img_data.split(',')[1]
                     file_bytes = base64.b64decode(img_data)
-                    mime_type = file_obj.get('mimeType') or 'image/jpeg'
-                    contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
+                    contents.append(types.Part.from_bytes(data=file_bytes, mime_type=file_obj.get('mimeType', 'image/jpeg')))
                 
-                # Формируем промпт в зависимости от выбранного инструмента SUPA
-                if tool_type == 'cake':
-                    shape = design_data.get('shape', 'Круглый')
-                    size = design_data.get('size', '16 см')
-                    text_on_cake = design_data.get('text', '')
-                    style = design_data.get('style', '')
-                    final_prompt = (
-                        f"Создай графический макет для съедобной пищевой печати на торт. "
-                        f"Форма: {shape}, Размер: {size}. Текст на макете: '{text_on_cake}'. "
-                        f"Стиль: {style} {prompt}. Вид сверху (flat lay), высокая детализация, аппетитные цвета."
-                    )
-                elif tool_type == 'social':
-                    platform = design_data.get('platform', 'Instagram')
-                    topic = design_data.get('topic', '')
-                    style = design_data.get('style', '')
-                    final_prompt = (
-                        f"Создай яркий и продающий дизайн поста для социальной сети {platform} на тему: '{topic}'. "
-                        f"Стиль оформления: {style} {prompt}. Квадратный формат 1:1, гармочная композиция, привлекающий внимание дизайн."
-                    )
-                elif tool_type == 'story':
-                    goal = design_data.get('goal', 'Продажи/Анонс')
-                    text = design_data.get('text', '')
-                    style = design_data.get('style', '')
-                    final_prompt = (
-                        f"Создай вертикальный дизайн для Stories / Reels (формат 9:16). Цель: {goal}. "
-                        f"Основной текст на макете: '{text}'. Стиль: {style} {prompt}. Сочный, современный трендовый дизайн."
-                    )
-                elif tool_type == 'presentation':
-                    slide_title = design_data.get('title', '')
-                    topic = design_data.get('topic', '')
-                    style = design_data.get('style', 'Деловой')
-                    final_prompt = (
-                        f"Создай профессиональный слайд для презентации на тему: '{topic}'. "
-                        f"Заголовок слайда: '{slide_title}'. Стиль: {style} {prompt}. Широкоформатный слайд 16:9, чистая верстка, инфографичный и презентабельный вид."
-                    )
-                elif tool_type == 'banner':
-                    banner_type = design_data.get('type', 'Рекламный баннер')
-                    text = design_data.get('text', '')
-                    style = design_data.get('style', '')
-                    final_prompt = (
-                        f"Создай рекламный баннер ({banner_type}). Текст на баннере: '{text}'. "
-                        f"Стиль: {style} {prompt}. Высокое качество, высокая конверсия, профессиональный графический дизайн."
-                    )
-                else:
-                    final_prompt = f"Создай профессиональный дизайн по описанию: {prompt}."
-
-                contents.append(final_prompt)
+                # ЖЕСТКОЕ ТРЕБОВАНИЕ ДЛЯ ИИ: НИКАКИХ БУКВ И НАДПИСЕЙ
+                strict_art_prompt = (
+                    f"Создай красивую графическую иллюстрацию или фон для кондитерского макета на тему: {prompt}. "
+                    f"Вид сверху (flat lay), высокая детализация, сочные аппетитные цвета. "
+                    f"СТРОГОЕ ТРЕБОВАНИЕ: На изображении НЕ должно быть никаких надписей, букв, цифр, слов или текста! Только чистая графика."
+                )
+                contents.append(strict_art_prompt)
 
                 config_params = types.GenerateContentConfig(
-                    system_instruction="Ты — профессиональный графический дизайнер и арт-директор студии SUPA. Создавай высококачественные коммерческие макеты, изображения, постеры и презентации с четким текстом и идеальной композицией.",
+                    system_instruction="Ты — профессиональный иллюстратор графики для кондитерских изделий. Создавай чистые векторные стили и иллюстрации. НИКОГДА не добавляй текст на картинку.",
                     response_modalities=["TEXT", "IMAGE"]
                 )
                 
-                print(f"🚀 Запрос к Gemini ({SINGLE_MODEL}) для инструмента [{tool_type}]...")
                 response = client.models.generate_content(
                     model=SINGLE_MODEL,
                     contents=contents,
                     config=config_params
                 )
                 
-                text_output = ""
                 image_data = None
                 mime_type = "image/jpeg"
                 
                 all_parts = []
-                try:
-                    if hasattr(response, 'parts') and response.parts:
-                        all_parts = response.parts
-                    elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                        all_parts = response.candidates[0].content.parts
-                except Exception as ex:
-                    print(f"⚠️ Ошибка чтения parts: {ex}")
+                if hasattr(response, 'parts') and response.parts:
+                    all_parts = response.parts
+                elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                    all_parts = response.candidates[0].content.parts
 
                 for part in all_parts:
-                    p_text = getattr(part, 'text', None)
-                    if p_text:
-                        text_output += ("\n" if text_output else "") + p_text
-                    
                     inline = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
-                    if inline:
-                        raw_bytes = getattr(inline, 'data', None)
-                        if raw_bytes:
-                            if isinstance(raw_bytes, bytes):
-                                image_data = base64.b64encode(raw_bytes).decode('utf-8')
-                            elif isinstance(raw_bytes, str):
-                                image_data = raw_bytes
-                            mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or 'image/jpeg'
-                            print(f"✅ Картинка успешно получена! Размер base64: {len(image_data)}")
+                    if inline and getattr(inline, 'data', None):
+                        raw_bytes = inline.data
+                        image_data = base64.b64encode(raw_bytes).decode('utf-8') if isinstance(raw_bytes, bytes) else str(raw_bytes)
+                        mime_type = getattr(inline, 'mime_type', None) or 'image/jpeg'
 
                 if image_data:
                     response_payload = {
-                        "type": "image",
+                        "type": "art",
                         "data": image_data,
                         "mimeType": mime_type,
                         "credits": current_balance,
-                        "text": text_output if text_output else f"✨ Дизайн успешно создан! (-{required_credits} кр.)"
+                        "text": "✨ Графический арт успешно создан и добавлен на холст!"
                     }
                 else:
-                    print("⚠️ Модель не вернула картинку, возвращаем кредиты.")
                     requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
                     response_payload = {
                         "type": "text",
                         "credits": current_balance,
-                        "text": text_output if text_output else "⚠️ Не удалось сформировать дизайн. Кредиты возвращены на баланс."
+                        "text": "⚠️ Не удалось сгенерировать арт. Кредиты возвращены."
                     }
                 
                 await websocket.send_text(json.dumps(response_payload))
 
             except Exception as e:
-                err_str = str(e)
-                print(f"❌ Ошибка генерации: {err_str}")
                 requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
-                await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
+                await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {str(e)}"}))
                 
     except WebSocketDisconnect:
-        print(f"Пользователь отключился.")
+        print("Кондитер отключился.")
 
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
@@ -250,7 +180,7 @@ async def create_payment_endpoint(request: Request):
             "amount": {"value": f"{float(amount):.2f}", "currency": "RUB"},
             "capture": True,
             "confirmation": {"type": "redirect", "return_url": "https://babayagaland.ru/"},
-            "description": f"Покупка {credits_count} кредитов для SUPA Студии ({email})",
+            "description": f"Покупка {credits_count} кредитов ({email})",
             "metadata": {"email": email, "credits": int(credits_count)}
         }
         response = requests.post(url, json=payload, auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), headers={"Idempotence-Key": str(uuid.uuid4())}, timeout=10)
