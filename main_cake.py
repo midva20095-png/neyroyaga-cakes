@@ -121,43 +121,51 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await websocket.send_text(json.dumps({
                 "type": "text", 
                 "credits": current_balance,
-                "text": "🪄 Создаем макет для печати... Готовим цвета и правильные пропорции!"
+                "text": "🪄 НейроЯга колдует над визуальным макетом для печати..."
             }))
             
             try:
                 contents = []
                 
-                if file_obj and file_obj.get('data'):
-                    file_bytes = base64.b64decode(file_obj['data'])
+                # Обработка входящего референса (картинки)
+                if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
+                    img_data = file_obj.get('data')
+                    if ',' in img_data:
+                        img_data = img_data.split(',')[1]
+                    file_bytes = base64.b64decode(img_data)
+                    mime_type = file_obj.get('mimeType') or 'image/jpeg'
+                    
                     contents.append({
                         "inline_data": {
-                            "mime_type": file_obj.get('mimeType', 'image/jpeg'),
+                            "mime_type": mime_type,
                             "data": file_bytes
                         }
                     })
                 
-                final_prompt = prompt
+                # Формируем жесткий запрос на генерацию ИЗОБРАЖЕНИЯ, а не текста
                 if template_info:
                     shape = template_info.get('shape', 'Круглый макет')
                     size = template_info.get('size', 'стандарт')
                     text_on_cake = template_info.get('text', '')
                     
                     final_prompt = (
-                        f"Создай профессиональный макет для съедобной печати на торт. "
+                        f"Сгенерируй визуальное изображение (картинку) готового макета для съедобной печати на торт. "
                         f"Форма и пропорции: {shape}, размеры: {size}. "
-                        f"Текст на макете: '{text_on_cake}'. "
-                        f"Пожелания кондитера: {prompt}. "
-                        f"Требования: идеальная центровка, высокое качество, "
-                        f"яркие и аппетитные цвета для пищевой печати на сахарной или вафельной бумаге."
+                        f"Текст на макете (обязательно нанеси на картинку читаемый текст): '{text_on_cake}'. "
+                        f"Пожелания кондитера к дизайну: {prompt}. "
+                        f"Требования: идеальная центровка, высокое качество, яркие и аппетитные цвета для пищевой печати."
+                    )
+                else:
+                    final_prompt = (
+                        f"Сгенерируй визуальное изображение (картинку) макета для торта по запросу: {prompt}. "
+                        f"Высокое качество, яркие цвета, готовый макет для съедобной печати."
                     )
                 
-                if final_prompt:
-                    contents.append(final_prompt)
-                elif not contents:
-                    contents.append("Создай круглый макет для печати на торт диаметром 16 см.")
+                contents.append(final_prompt)
 
+                # Строгая инструкция генерировать именно картинку
                 config_params = {
-                    "system_instruction": "Ты — арт-директор кондитерской студии. Создаешь макеты для тортов."
+                    "system_instruction": "Ты — специализированный ИИ-генератор графических макетов для кондитерской печати. Твоя задача — всегда генерировать и возвращать готовую визуальную картинку (изображение) макета торта. Никогда не отвечай только текстом, если пользователь ждет макет."
                 }
                 
                 response = client.models.generate_content(
@@ -173,14 +181,32 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 candidate = response.candidates[0] if response.candidates else None
                 if candidate and candidate.content and candidate.content.parts:
                     for part in candidate.content.parts:
-                        if getattr(part, 'text', None):
-                            text_output += ("\n" if text_output else "") + part.text
+                        part_text = getattr(part, 'text', None)
+                        if not part_text and isinstance(part, dict):
+                            part_text = part.get('text')
+                        if part_text:
+                            text_output += ("\n" if text_output else "") + part_text
                         
                         inline = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
-                        if inline and getattr(inline, 'data', None):
-                            raw_bytes = inline.data
-                            image_data = base64.b64encode(raw_bytes).decode('utf-8') if isinstance(raw_bytes, bytes) else str(raw_bytes)
-                            mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or "image/jpeg"
+                        if not inline and isinstance(part, dict):
+                            inline = part.get('inline_data') or part.get('inlineData')
+                        
+                        if inline:
+                            raw_bytes = getattr(inline, 'data', None)
+                            if not raw_bytes and isinstance(inline, dict):
+                                raw_bytes = inline.get('data')
+                            
+                            if raw_bytes:
+                                if isinstance(raw_bytes, bytes):
+                                    image_data = base64.b64encode(raw_bytes).decode('utf-8')
+                                elif isinstance(raw_bytes, str):
+                                    image_data = raw_bytes
+                                
+                                mime_val = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None)
+                                if not mime_val and isinstance(inline, dict):
+                                    mime_val = inline.get('mime_type') or inline.get('mimeType')
+                                if mime_val:
+                                    mime_type = mime_val
                 
                 if image_data:
                     response_payload = {
@@ -188,13 +214,15 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         "data": image_data,
                         "mimeType": mime_type,
                         "credits": current_balance,
-                        "text": text_output if text_output else f"🎂 Макет для печати готов! (-{required_credits} кр.)"
+                        "text": text_output if text_output else f"🎂 Макет для печати успешно создан! (-{required_credits} кр.)"
                     }
                 else:
+                    # Если модель все же вернула только текст, возвращаем кредит обратно
+                    add_credits_to_sheets(client_email, required_credits)
                     response_payload = {
                         "type": "text",
                         "credits": current_balance,
-                        "text": text_output if text_output else "Не удалось сгенерировать макет..."
+                        "text": text_output if text_output else "⚠️ Нейросеть не смогла сформировать картинку. Попробуйте уточнить запрос. Кредиты возвращены на баланс."
                     }
                 
                 await websocket.send_text(json.dumps(response_payload))
