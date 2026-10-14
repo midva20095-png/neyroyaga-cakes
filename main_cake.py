@@ -28,27 +28,18 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
 SINGLE_MODEL = 'gemini-3-pro-image'
-CREDIT_COST = 5  # Стоимость генерации макета
+CREDIT_COST = 5
 
 def check_and_deduct_credits(email: str, cost: int) -> dict:
     if not GOOGLE_SCRIPT_URL:
         return {"success": True, "credits": 999}
-
     try:
-        payload = {
-            "action": "deduct",
-            "email": email,
-            "cost": cost
-        }
+        payload = {"action": "deduct", "email": email, "cost": cost}
         response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=25)
         if response.status_code != 200:
             return {"success": False, "credits": 0}
-        
         res_data = response.json()
-        return {
-            "success": res_data.get("success", False),
-            "credits": res_data.get("credits", 0)
-        }
+        return {"success": res_data.get("success", False), "credits": res_data.get("credits", 0)}
     except Exception as e:
         print(f"❌ Ошибка Google Sheets: {e}")
         return {"success": False, "credits": 0}
@@ -57,15 +48,11 @@ def add_credits_to_sheets(email: str, credits_amount: int) -> bool:
     if not GOOGLE_SCRIPT_URL:
         return True
     try:
-        payload = {
-            "action": "deduct",
-            "email": email,
-            "cost": -abs(credits_amount)
-        }
+        payload = {"action": "deduct", "email": email, "cost": -abs(credits_amount)}
         res = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=25)
         return res.status_code == 200
     except Exception as e:
-        print(f"❌ Ошибка добавления кредитов в Google Sheets: {e}")
+        print(f"❌ Ошибка добавления кредитов: {e}")
         return False
 
 @app.get("/")
@@ -83,7 +70,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.send_text(json.dumps({
         "type": "text",
         "credits": initial_balance,
-        "text": "🎂 Приветствуем в студии «НейроЯга: Макеты для тортов»! Выбирай готовый шаблон в галерее сверху или опиши свой макет."
+        "text": "🎂 Приветствуем в студии «НейроЯга: Макеты для тортов»! Выбирай готовый шаблон или отправь референс."
     }))
 
     try:
@@ -104,30 +91,28 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 prompt = raw_message
 
             required_credits = CREDIT_COST
-            
-            credit_result = check_and_deduct_credits(client_email, required_credits)
+            credit_result = check_and_dedktop = check_and_deduct_credits(client_email, required_credits) if 'check_and_dedktop' not in globals() else check_and_deduct_credits(client_email, required_credits)
             can_proceed = credit_result.get("success", False)
             current_balance = credit_result.get("credits", 0)
 
             if not can_proceed:
-                error_payload = json.dumps({
+                await websocket.send_text(json.dumps({
                     "type": "text", 
                     "credits": current_balance,
                     "text": f"💎 Недостаточно кредитов! Требуется: {required_credits} кр., а на балансе: {current_balance} кр."
-                })
-                await websocket.send_text(error_payload)
+                }))
                 continue
             
             await websocket.send_text(json.dumps({
                 "type": "text", 
                 "credits": current_balance,
-                "text": "🪄 НейроЯга колдует над визуальным макетом для печати..."
+                "text": "🪄 НейроЯга верстает профессиональный макет для съедобной печати..."
             }))
             
             try:
                 contents = []
                 
-                # Обработка входящего референса (картинки)
+                # Обработка картинки-референса
                 if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
                     img_data = file_obj.get('data')
                     if ',' in img_data:
@@ -142,30 +127,29 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         }
                     })
                 
-                # Формируем жесткий запрос на генерацию ИЗОБРАЖЕНИЯ, а не текста
+                # Строгий промпт именно для макета печати
                 if template_info:
                     shape = template_info.get('shape', 'Круглый макет')
-                    size = template_info.get('size', 'стандарт')
+                    size = template_info.get('size', '16 см')
                     text_on_cake = template_info.get('text', '')
                     
                     final_prompt = (
-                        f"Сгенерируй визуальное изображение (картинку) готового макета для съедобной печати на торт. "
-                        f"Форма и пропорции: {shape}, размеры: {size}. "
-                        f"Текст на макете (обязательно нанеси на картинку читаемый текст): '{text_on_cake}'. "
-                        f"Пожелания кондитера к дизайну: {prompt}. "
-                        f"Требования: идеальная центровка, высокое качество, яркие и аппетитные цвета для пищевой печати."
+                        f"Создай графический макет для съедобной пищевой печати на торт. "
+                        f"Форма макета: {shape} (диаметр/сторона {size}). "
+                        f"Текст на макете (обязательно четко пропиши его графически): '{text_on_cake}'. "
+                        f"Пожелания по стилю и дизайну: {prompt}. "
+                        f"Строгие требования: это макет для печати на сахарной бумаге, вид сверху строго перпендикулярно (flat lay), сбатная композиция, высокая четкость, аппетитные цвета."
                     )
                 else:
                     final_prompt = (
-                        f"Сгенерируй визуальное изображение (картинку) макета для торта по запросу: {prompt}. "
-                        f"Высокое качество, яркие цвета, готовый макет для съедобной печати."
+                        f"Создай графический макет для съедобной пищевой печати на торт по описанию: {prompt}. "
+                        f"Вид сверху, четкие границы круга или прямоугольника для печати, красивый декор, идеальное качество."
                     )
                 
                 contents.append(final_prompt)
 
-                # Строгая инструкция генерировать именно картинку
                 config_params = {
-                    "system_instruction": "Ты — специализированный ИИ-генератор графических макетов для кондитерской печати. Твоя задача — всегда генерировать и возвращать готовую визуальную картинку (изображение) макета торта. Никогда не отвечай только текстом, если пользователь ждет макет."
+                    "system_instruction": "Ты — генератор макетов для съедобной кондитерской печати. Твоя единственная цель — выдать готовое графическое изображение (картинку) макета для торта. Картинка должна быть в высоком разрешении, с правильной центровкой и текстом."
                 }
                 
                 response = client.models.generate_content(
@@ -204,25 +188,25 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                                 
                                 mime_val = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None)
                                 if not mime_val and isinstance(inline, dict):
-                                    mime_val = inline.get('mime_type') or inline.get('mimeType')
+                                    mime_val = mime_val or inline.get('mime_type') or inline.get('mimeType')
                                 if mime_val:
                                     mime_type = mime_val
-                
+
                 if image_data:
                     response_payload = {
                         "type": "image",
                         "data": image_data,
                         "mimeType": mime_type,
                         "credits": current_balance,
-                        "text": text_output if text_output else f"🎂 Макет для печати успешно создан! (-{required_credits} кр.)"
+                        "text": text_output if text_output else f"🎂 Макет для съедобной печати готов! (-{required_credits} кр.)"
                     }
                 else:
-                    # Если модель все же вернула только текст, возвращаем кредит обратно
+                    # Возвращаем кредит, если картинка не сгенерировалась
                     add_credits_to_sheets(client_email, required_credits)
                     response_payload = {
                         "type": "text",
                         "credits": current_balance,
-                        "text": text_output if text_output else "⚠️ Нейросеть не смогла сформировать картинку. Попробуйте уточнить запрос. Кредиты возвращены на баланс."
+                        "text": text_output if text_output else "⚠️ Не удалось сформировать графический макет. Кредиты возвращены."
                     }
                 
                 await websocket.send_text(json.dumps(response_payload))
@@ -236,24 +220,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     except WebSocketDisconnect:
         print(f"Кондитер отключился.")
 
-@app.post("/api/auth")
-async def authenticate_user(request: Request):
-    if not GOOGLE_SCRIPT_URL: return {"success": True}
-    try:
-        data = await request.json()
-        response = requests.post(GOOGLE_SCRIPT_URL, json={"action": "auth", "email": data.get("email"), "password": data.get("password")}, timeout=25)
-        return response.json() if response.status_code == 200 else {"success": False}
-    except Exception as e: return {"success": False, "error": str(e)}
-
 @app.post("/create-payment")
 @app.post("/api/create-payment")
 async def create_payment_endpoint(request: Request):
     try:
         data = await request.json()
-        email = data.get("email")
-        amount = data.get("amount")
-        credits_count = data.get("credits")
-
+        email, amount, credits_count = data.get("email"), data.get("amount"), data.get("credits")
         if not email or not amount or not credits_count:
             return {"success": False, "error": "Missing required fields"}
 
@@ -264,31 +236,14 @@ async def create_payment_endpoint(request: Request):
         payload = {
             "amount": {"value": f"{float(amount):.2f}", "currency": "RUB"},
             "capture": True,
-            "confirmation": {
-                "type": "redirect", 
-                "return_url": "https://babayagaland.ru/"
-            },
+            "confirmation": {"type": "redirect", "return_url": "https://babayagaland.ru/"},
             "description": f"Покупка {credits_count} кредитов для НейроЯги ({email})",
-            "metadata": {
-                "email": email, 
-                "credits": int(credits_count)
-            }
+            "metadata": {"email": email, "credits": int(credits_count)}
         }
-        
-        response = requests.post(
-            url, 
-            json=payload, 
-            auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), 
-            headers={"Idempotence-Key": str(uuid.uuid4())}, 
-            timeout=10
-        )
-        
+        response = requests.post(url, json=payload, auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), headers={"Idempotence-Key": str(uuid.uuid4())}, timeout=10)
         res_json = response.json()
-        confirmation_url = res_json.get("confirmation", {}).get("confirmation_url")
-        return {"success": True, "confirmation_url": confirmation_url}
-        
+        return {"success": True, "confirmation_url": res_json.get("confirmation", {}).get("confirmation_url")}
     except Exception as e:
-        print(f"❌ Ошибка ЮKassa: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/yookassa-webhook")
@@ -296,21 +251,13 @@ async def create_payment_endpoint(request: Request):
 async def yookassa_webhook(request: Request):
     try:
         event_json = await request.json()
-        event_type = event_json.get("event")
-        
-        if event_type == "payment.succeeded":
-            payment_obj = event_json.get("object", {})
-            metadata = payment_obj.get("metadata", {})
-            email = metadata.get("email")
-            credits_to_add = int(metadata.get("credits", 0))
-            
-            if email and credits_to_add > 0:
-                success = add_credits_to_sheets(email, credits_to_add)
-                print(f"✅ Успешная оплата для {email}! Добавлено {credits_to_add} кр. Статус Google Sheets: {success}")
-                
+        if event_json.get("event") == "payment.succeeded":
+            meta = event_json.get("object", {}).get("metadata", {})
+            email, add_cr = meta.get("email"), int(meta.get("credits", 0))
+            if email and add_cr > 0:
+                add_credits_to_sheets(email, add_cr)
         return {"status": "ok"}
     except Exception as e:
-        print(f"❌ Ошибка в вебхуке ЮKassa: {e}")
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
