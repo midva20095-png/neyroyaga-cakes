@@ -27,17 +27,9 @@ GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
-MODEL_MAPPING = {
-    'flash': 'gemini-2.5-flash',
-    'layout_gen': 'gemini-2.5-flash',  # При необходимости замени на модель генерации изображений
-    'layout_pro': 'gemini-2.5-pro'
-}
-
-CREDIT_COSTS = {
-    'flash': 1,
-    'layout_gen': 5,    # 5 кредитов за макет
-    'layout_pro': 10    # 10 кредитов за Pro
-}
+# Единственная используемая модель
+SINGLE_MODEL = 'gemini-3-pro-image'
+CREDIT_COST = 5  # Стоимость генерации макета
 
 def check_and_deduct_credits(email: str, cost: int) -> dict:
     if not GOOGLE_SCRIPT_URL:
@@ -63,11 +55,9 @@ def check_and_deduct_credits(email: str, cost: int) -> dict:
         return {"success": False, "credits": 0}
 
 def add_credits_to_sheets(email: str, credits_amount: int) -> bool:
-    """Функция пополнения баланса в Google Таблицах через отрицательный deduct"""
     if not GOOGLE_SCRIPT_URL:
         return True
     try:
-        # Передаем отрицательный cost, чтобы прибавить кредиты в Google Таблице
         payload = {
             "action": "deduct",
             "email": email,
@@ -102,7 +92,6 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             raw_message = await websocket.receive_text()
             
             prompt = ""
-            model_key = 'layout_gen'
             file_obj = None
             template_info = None
             
@@ -110,13 +99,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 data = json.loads(raw_message)
                 if isinstance(data, dict):
                     prompt = data.get('prompt', '')
-                    model_key = data.get('modelKey', 'layout_gen')
                     file_obj = data.get('file') 
                     template_info = data.get('template_info') 
             except json.JSONDecodeError:
                 prompt = raw_message
 
-            required_credits = CREDIT_COSTS.get(model_key, 5)
+            required_credits = CREDIT_COST
             
             credit_result = check_and_deduct_credits(client_email, required_credits)
             can_proceed = credit_result.get("success", False)
@@ -169,14 +157,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 elif not contents:
                     contents.append("Создай круглый макет для печати на торт диаметром 16 см.")
 
-                resolved_model = MODEL_MAPPING.get(model_key, 'gemini-2.5-flash')
-
                 config_params = {
                     "system_instruction": "Ты — арт-директор кондитерской студии. Создаешь макеты для тортов."
                 }
                 
                 response = client.models.generate_content(
-                    model=resolved_model,
+                    model=SINGLE_MODEL,
                     contents=contents,
                     config=config_params
                 )
@@ -217,12 +203,13 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             except Exception as e:
                 err_str = str(e)
                 print(f"❌ Ошибка генерации: {err_str}")
+                # Возвращаем кредит обратно при ошибке
+                add_credits_to_sheets(client_email, required_credits)
                 await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
-            
-    except WebSocketDisconnect:
-        print(f"Кондитер отключился.")
+                
+        except WebSocketDisconnect:
+            print(f"Кондитер отключился.")
 
-# Авторизация
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
     if not GOOGLE_SCRIPT_URL: return {"success": True}
@@ -232,8 +219,9 @@ async def authenticate_user(request: Request):
         return response.json() if response.status_code == 200 else {"success": False}
     except Exception as e: return {"success": False, "error": str(e)}
 
-# Функция создания платежа
-async def process_create_payment(request: Request):
+@app.post("/create-payment")
+@app.post("/api/create-payment")
+async def create_payment_endpoint(request: Request):
     try:
         data = await request.json()
         email = data.get("email")
@@ -277,13 +265,6 @@ async def process_create_payment(request: Request):
         print(f"❌ Ошибка ЮKassa: {e}")
         return {"success": False, "error": str(e)}
 
-# Поддерживаем оба URL (прямой и с префиксом /api/)
-@app.post("/create-payment")
-@app.post("/api/create-payment")
-async def create_payment_endpoint(request: Request):
-    return await process_create_payment(request)
-
-# Вебхук от ЮKassa для автоматического зачисления
 @app.post("/yookassa-webhook")
 @app.post("/api/yookassa-webhook")
 async def yookassa_webhook(request: Request):
