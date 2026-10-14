@@ -28,9 +28,9 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
 MODEL_MAPPING = {
-    'flash': 'gemini-3.8-flash',
-    'layout_gen': 'gemini-3.1-flash-image',     # Модель для генерации картинки макета
-    'layout_pro': 'gemini-3-pro-image'          # Pro-модель
+    'flash': 'gemini-2.5-flash',
+    'layout_gen': 'gemini-2.5-flash',  # При необходимости замени на модель генерации изображений
+    'layout_pro': 'gemini-2.5-pro'
 }
 
 CREDIT_COSTS = {
@@ -61,6 +61,27 @@ def check_and_deduct_credits(email: str, cost: int) -> dict:
     except Exception as e:
         print(f"❌ Ошибка Google Sheets: {e}")
         return {"success": False, "credits": 0}
+
+def add_credits_to_sheets(email: str, credits_amount: int) -> bool:
+    """Функция пополнения баланса в Google Таблицах через отрицательный deduct"""
+    if not GOOGLE_SCRIPT_URL:
+        return True
+    try:
+        # Передаем отрицательный cost, чтобы прибавить кредиты в Google Таблице
+        payload = {
+            "action": "deduct",
+            "email": email,
+            "cost": -abs(credits_amount)
+        }
+        res = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=25)
+        return res.status_code == 200
+    except Exception as e:
+        print(f"❌ Ошибка добавления кредитов в Google Sheets: {e}")
+        return False
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "NeiroYaga Cake Layouts Service"}
 
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
@@ -148,7 +169,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 elif not contents:
                     contents.append("Создай круглый макет для печати на торт диаметром 16 см.")
 
-                resolved_model = MODEL_MAPPING.get(model_key, 'gemini-3.1-flash-image')
+                resolved_model = MODEL_MAPPING.get(model_key, 'gemini-2.5-flash')
 
                 config_params = {
                     "system_instruction": "Ты — арт-директор кондитерской студии. Создаешь макеты для тортов."
@@ -201,7 +222,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     except WebSocketDisconnect:
         print(f"Кондитер отключился.")
 
-# Авторизация и ЮKassa
+# Авторизация
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
     if not GOOGLE_SCRIPT_URL: return {"success": True}
@@ -211,25 +232,80 @@ async def authenticate_user(request: Request):
         return response.json() if response.status_code == 200 else {"success": False}
     except Exception as e: return {"success": False, "error": str(e)}
 
-@app.post("/api/create-payment")
-async def create_payment(request: Request):
+# Функция создания платежа
+async def process_create_payment(request: Request):
     try:
         data = await request.json()
-        email, amount, credits = data.get("email"), data.get("amount"), data.get("credits")
-        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY: return {"success": True, "confirmation_url": "https://yookassa.ru"}
+        email = data.get("email")
+        amount = data.get("amount")
+        credits_count = data.get("credits")
+
+        if not email or not amount or not credits_count:
+            return {"success": False, "error": "Missing required fields"}
+
+        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+            return {"success": True, "confirmation_url": "https://yookassa.ru"}
 
         url = "https://api.yookassa.ru/v3/payments"
         payload = {
             "amount": {"value": f"{float(amount):.2f}", "currency": "RUB"},
             "capture": True,
-            "confirmation": {"type": "redirect", "return_url": "https://babayagaland.ru/cakes"},
-            "description": f"Покупка {credits} кредитов для макетов ({email})",
-            "metadata": {"email": email, "credits": int(credits)}
+            "confirmation": {
+                "type": "redirect", 
+                "return_url": "https://babayagaland.ru/"
+            },
+            "description": f"Покупка {credits_count} кредитов для НейроЯги ({email})",
+            "metadata": {
+                "email": email, 
+                "credits": int(credits_count)
+            }
         }
-        response = requests.post(url, json=payload, auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), headers={"Idempotence-Key": str(uuid.uuid4())}, timeout=10)
-        return {"success": True, "confirmation_url": response.json().get("confirmation", {}).get("confirmation_url")}
-    except Exception as e: return {"success": False, "error": str(e)}
+        
+        response = requests.post(
+            url, 
+            json=payload, 
+            auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), 
+            headers={"Idempotence-Key": str(uuid.uuid4())}, 
+            timeout=10
+        )
+        
+        res_json = response.json()
+        confirmation_url = res_json.get("confirmation", {}).get("confirmation_url")
+        return {"success": True, "confirmation_url": confirmation_url}
+        
+    except Exception as e:
+        print(f"❌ Ошибка ЮKassa: {e}")
+        return {"success": False, "error": str(e)}
+
+# Поддерживаем оба URL (прямой и с префиксом /api/)
+@app.post("/create-payment")
+@app.post("/api/create-payment")
+async def create_payment_endpoint(request: Request):
+    return await process_create_payment(request)
+
+# Вебхук от ЮKassa для автоматического зачисления
+@app.post("/yookassa-webhook")
+@app.post("/api/yookassa-webhook")
+async def yookassa_webhook(request: Request):
+    try:
+        event_json = await request.json()
+        event_type = event_json.get("event")
+        
+        if event_type == "payment.succeeded":
+            payment_obj = event_json.get("object", {})
+            metadata = payment_obj.get("metadata", {})
+            email = metadata.get("email")
+            credits_to_add = int(metadata.get("credits", 0))
+            
+            if email and credits_to_add > 0:
+                success = add_credits_to_sheets(email, credits_to_add)
+                print(f"✅ Успешная оплата для {email}! Добавлено {credits_to_add} кр. Статус Google Sheets: {success}")
+                
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"❌ Ошибка в вебхуке ЮKassa: {e}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main_cake:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
