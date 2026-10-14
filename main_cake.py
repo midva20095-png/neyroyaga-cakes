@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="NeiroYaga Vector Cake Editor")
+app = FastAPI(title="NeiroYaga Vector Cake Editor - Flash")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,8 @@ GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
-SINGLE_MODEL = 'gemini-3-pro-image'
+# Использование обычной быстрой модели вместо pro
+SINGLE_MODEL = 'gemini-3.1-flash-image'
 CREDIT_COST = 5
 
 def check_and_deduct_credits(email: str, cost: int) -> dict:
@@ -47,7 +48,7 @@ def check_and_deduct_credits(email: str, cost: int) -> dict:
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.accept()
-    print(f"🎂 Кондитер {client_email} подключился к векторному редактору!")
+    print(f"🎂 Кондитер {client_email} подключился!")
     
     init_result = check_and_deduct_credits(client_email, 0)
     initial_balance = init_result.get("credits", 0)
@@ -55,16 +56,23 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.send_text(json.dumps({
         "type": "text",
         "credits": initial_balance,
-        "text": "🎂 Добро пожаловать в профессиональный конструктор макетов! Сгенерируйте чистый арт для торта и оформите макет векторным текстом."
+        "text": "🎂 Добро пожаловать в студию макетов! Введите описание для чистого арта."
     }))
 
     try:
         while True:
             raw_message = await websocket.receive_text()
-            data = json.loads(raw_message)
             
-            prompt = data.get('prompt', '')
-            file_obj = data.get('file')
+            prompt = ""
+            file_obj = None
+            
+            try:
+                data = json.loads(raw_message)
+                if isinstance(data, dict):
+                    prompt = data.get('prompt', '')
+                    file_obj = data.get('file') 
+            except json.JSONDecodeError:
+                prompt = raw_message
 
             required_credits = CREDIT_COST
             credit_result = check_and_deduct_credits(client_email, required_credits)
@@ -87,47 +95,65 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             
             try:
                 contents = []
-                if file_obj and file_obj.get('data'):
+                
+                if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
                     img_data = file_obj.get('data')
                     if ',' in img_data:
                         img_data = img_data.split(',')[1]
                     file_bytes = base64.b64decode(img_data)
-                    contents.append(types.Part.from_bytes(data=file_bytes, mime_type=file_obj.get('mimeType', 'image/jpeg')))
+                    mime_type = file_obj.get('mimeType') or 'image/jpeg'
+                    contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
                 
-                # ЖЕСТКОЕ ТРЕБОВАНИЕ ДЛЯ ИИ: НИКАКИХ БУКВ И НАДПИСЕЙ
+                # ЖЕСТКИЕ ПРАВИЛА: Один объект, по центру, белый фон, строго без текста
                 strict_art_prompt = (
-                    f"Создай красивую графическую иллюстрацию или фон для кондитерского макета на тему: {prompt}. "
-                    f"Вид сверху (flat lay), высокая детализация, сочные аппетитные цвета. "
-                    f"СТРОГОЕ ТРЕБОВАНИЕ: На изображении НЕ должно быть никаких надписей, букв, цифр, слов или текста! Только чистая графика."
+                    f"Создай ОДИН ЕДИНСТВЕННЫЙ центральный графический элемент для кондитерского макета на тему: {prompt}. "
+                    f"КОМПОЗИЦИЯ: Строго по центру, изолированный объект на абсолютном чистом белом фоне. "
+                    f"НИКАКИХ коллажей, никаких паттернов, никаких множества разных предметов (никаких случайных сладостей или ассорти вокруг). "
+                    f"Только один главный гармоничный рисунок с чистыми краями. "
+                    f"СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, цифр или текста!"
                 )
                 contents.append(strict_art_prompt)
 
                 config_params = types.GenerateContentConfig(
-                    system_instruction="Ты — профессиональный иллюстратор графики для кондитерских изделий. Создавай чистые векторные стили и иллюстрации. НИКОГДА не добавляй текст на картинку.",
+                    system_instruction="Ты — профессиональный иллюстратор графики для кондитерских изделий. Создавай чистые изолированные иллюстрации. НИКОГДА не добавляй текст.",
                     response_modalities=["TEXT", "IMAGE"]
                 )
                 
+                print(f"🚀 Запрос к модели {SINGLE_MODEL}...")
                 response = client.models.generate_content(
                     model=SINGLE_MODEL,
                     contents=contents,
                     config=config_params
                 )
                 
+                text_output = ""
                 image_data = None
                 mime_type = "image/jpeg"
                 
                 all_parts = []
-                if hasattr(response, 'parts') and response.parts:
-                    all_parts = response.parts
-                elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                    all_parts = response.candidates[0].content.parts
+                try:
+                    if hasattr(response, 'parts') and response.parts:
+                        all_parts = response.parts
+                    elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                        all_parts = response.candidates[0].content.parts
+                except Exception as ex:
+                    print(f"⚠️ Ошибка чтения parts: {ex}")
 
                 for part in all_parts:
+                    p_text = getattr(part, 'text', None)
+                    if p_text:
+                        text_output += ("\n" if text_output else "") + p_text
+                    
                     inline = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
-                    if inline and getattr(inline, 'data', None):
-                        raw_bytes = inline.data
-                        image_data = base64.b64encode(raw_bytes).decode('utf-8') if isinstance(raw_bytes, bytes) else str(raw_bytes)
-                        mime_type = getattr(inline, 'mime_type', None) or 'image/jpeg'
+                    if inline:
+                        raw_bytes = getattr(inline, 'data', None)
+                        if raw_bytes:
+                            if isinstance(raw_bytes, bytes):
+                                image_data = base64.b64encode(raw_bytes).decode('utf-8')
+                            elif isinstance(raw_bytes, str):
+                                image_data = raw_bytes
+                            mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or 'image/jpeg'
+                            print(f"✅ Картинка успешно получена! Размер base64: {len(image_data)}")
 
                 if image_data:
                     response_payload = {
@@ -135,24 +161,27 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         "data": image_data,
                         "mimeType": mime_type,
                         "credits": current_balance,
-                        "text": "✨ Графический арт успешно создан и добавлен на холст!"
+                        "text": "✨ Чистый графический арт успешно создан!"
                     }
                 else:
+                    print("⚠️ Модель не вернула картинку, возвращаем кредиты.")
                     requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
                     response_payload = {
                         "type": "text",
                         "credits": current_balance,
-                        "text": "⚠️ Не удалось сгенерировать арт. Кредиты возвращены."
+                        "text": "⚠️ Не удалось сформировать арт. Кредиты возвращены."
                     }
                 
                 await websocket.send_text(json.dumps(response_payload))
 
             except Exception as e:
+                err_str = str(e)
+                print(f"❌ Ошибка генерации: {err_str}")
                 requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
-                await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {str(e)}"}))
+                await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
                 
     except WebSocketDisconnect:
-        print("Кондитер отключился.")
+        print(f"Кондитер отключился.")
 
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
