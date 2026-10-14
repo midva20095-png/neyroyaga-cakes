@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from requests.auth import HTTPBasicAuth
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -91,7 +92,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 prompt = raw_message
 
             required_credits = CREDIT_COST
-            credit_result = check_and_dedktop = check_and_deduct_credits(client_email, required_credits) if 'check_and_dedktop' not in globals() else check_and_deduct_credits(client_email, required_credits)
+            credit_result = check_and_deduct_credits(client_email, required_credits)
             can_proceed = credit_result.get("success", False)
             current_balance = credit_result.get("credits", 0)
 
@@ -112,7 +113,6 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             try:
                 contents = []
                 
-                # Обработка картинки-референса
                 if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
                     img_data = file_obj.get('data')
                     if ',' in img_data:
@@ -120,14 +120,10 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     file_bytes = base64.b64decode(img_data)
                     mime_type = file_obj.get('mimeType') or 'image/jpeg'
                     
-                    contents.append({
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": file_bytes
-                        }
-                    })
+                    contents.append(
+                        types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+                    )
                 
-                # Строгий промпт именно для макета печати
                 if template_info:
                     shape = template_info.get('shape', 'Круглый макет')
                     size = template_info.get('size', '16 см')
@@ -138,7 +134,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         f"Форма макета: {shape} (диаметр/сторона {size}). "
                         f"Текст на макете (обязательно четко пропиши его графически): '{text_on_cake}'. "
                         f"Пожелания по стилю и дизайну: {prompt}. "
-                        f"Строгие требования: это макет для печати на сахарной бумаге, вид сверху строго перпендикулярно (flat lay), сбатная композиция, высокая четкость, аппетитные цвета."
+                        f"Строгие требования: это макет для печати на сахарной бумаге, вид сверху строго перпендикулярно (flat lay), сбалансированная композиция, высокая четкость, аппетитные цвета."
                     )
                 else:
                     final_prompt = (
@@ -148,10 +144,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 
                 contents.append(final_prompt)
 
-                config_params = {
-                    "system_instruction": "Ты — генератор макетов для съедобной кондитерской печати. Твоя единственная цель — выдать готовое графическое изображение (картинку) макета для торта. Картинка должна быть в высоком разрешении, с правильной центровкой и текстом."
-                }
+                config_params = types.GenerateContentConfig(
+                    system_instruction="Ты — генератор макетов для съедобной кондитерской печати. Твоя единственная цель — выдать готовое графическое изображение (картинку) макета для торта. Картинка должна быть в высоком разрешении, с правильной центровкой и текстом.",
+                    response_modalities=["TEXT", "IMAGE"]
+                )
                 
+                print(f"🚀 Отправка запроса в Gemini ({SINGLE_MODEL})...")
                 response = client.models.generate_content(
                     model=SINGLE_MODEL,
                     contents=contents,
@@ -162,35 +160,33 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 image_data = None
                 mime_type = "image/jpeg"
                 
-                candidate = response.candidates[0] if response.candidates else None
-                if candidate and candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        part_text = getattr(part, 'text', None)
-                        if not part_text and isinstance(part, dict):
-                            part_text = part.get('text')
-                        if part_text:
-                            text_output += ("\n" if text_output else "") + part_text
-                        
-                        inline = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
-                        if not inline and isinstance(part, dict):
-                            inline = part.get('inline_data') or part.get('inlineData')
-                        
-                        if inline:
-                            raw_bytes = getattr(inline, 'data', None)
-                            if not raw_bytes and isinstance(inline, dict):
-                                raw_bytes = inline.get('data')
-                            
-                            if raw_bytes:
-                                if isinstance(raw_bytes, bytes):
-                                    image_data = base64.b64encode(raw_bytes).decode('utf-8')
-                                elif isinstance(raw_bytes, str):
-                                    image_data = raw_bytes
-                                
-                                mime_val = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None)
-                                if not mime_val and isinstance(inline, dict):
-                                    mime_val = mime_val or inline.get('mime_type') or inline.get('mimeType')
-                                if mime_val:
-                                    mime_type = mime_val
+                # Безопасно извлекаем части из ответа
+                all_parts = []
+                try:
+                    if hasattr(response, 'parts') and response.parts:
+                        all_parts = response.parts
+                    elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                        all_parts = response.candidates[0].content.parts
+                except Exception as ex:
+                    print(f"⚠️ Ошибка при чтении parts ответа: {ex}")
+
+                print(f"📦 Получено частей от модели: {len(all_parts)}")
+
+                for part in all_parts:
+                    p_text = getattr(part, 'text', None)
+                    if p_text:
+                        text_output += ("\n" if text_output else "") + p_text
+                    
+                    inline = getattr(part, 'inline_data', None)
+                    if inline:
+                        raw_bytes = getattr(inline, 'data', None)
+                        if raw_bytes:
+                            if isinstance(raw_bytes, bytes):
+                                image_data = base64.b64encode(raw_bytes).decode('utf-8')
+                            elif isinstance(raw_bytes, str):
+                                image_data = raw_bytes
+                            mime_type = getattr(inline, 'mime_type', 'image/jpeg')
+                            print(f"✅ Картинка успешно получена! Размер (base64): {len(image_data)}")
 
                 if image_data:
                     response_payload = {
@@ -201,7 +197,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         "text": text_output if text_output else f"🎂 Макет для съедобной печати готов! (-{required_credits} кр.)"
                     }
                 else:
-                    # Возвращаем кредит, если картинка не сгенерировалась
+                    print("⚠️ Модель не вернула картинку, возвращаем кредит.")
                     add_credits_to_sheets(client_email, required_credits)
                     response_payload = {
                         "type": "text",
@@ -219,6 +215,15 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 
     except WebSocketDisconnect:
         print(f"Кондитер отключился.")
+
+@app.post("/api/auth")
+async def authenticate_user(request: Request):
+    if not GOOGLE_SCRIPT_URL: return {"success": True}
+    try:
+        data = await request.json()
+        response = requests.post(GOOGLE_SCRIPT_URL, json={"action": "auth", "email": data.get("email"), "password": data.get("password")}, timeout=25)
+        return response.json() if response.status_code == 200 else {"success": False}
+    except Exception as e: return {"success": False, "error": str(e)}
 
 @app.post("/create-payment")
 @app.post("/api/create-payment")
