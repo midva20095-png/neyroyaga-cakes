@@ -2,17 +2,22 @@ import os
 import json
 import base64
 import uuid
+import io
 import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from requests.auth import HTTPBasicAuth
+from pydantic import BaseModel
+from typing import List
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from pdf_builder import A4LayoutEngine
 
 load_dotenv()
 
-app = FastAPI(title="NeiroYaga Vector Cake Editor - Flash")
+app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +49,58 @@ def check_and_deduct_credits(email: str, cost: int) -> dict:
         print(f"❌ Ошибка Google Sheets: {e}")
         return {"success": False, "credits": 0}
 
+# Pydantic модели для генерации PDF-макета
+class ItemConfig(BaseModel):
+    image_base64: str  # Картинка в base64
+    type: str          # 'height', 'width', 'diameter'
+    size: float        # Размер в сантиметрах
+    copies: int = 1    # Количество копий
+
+class LayoutRequest(BaseModel):
+    items: List[ItemConfig]
+
+
+@app.post("/api/generate-pdf")
+async def generate_pdf_endpoint(payload: LayoutRequest):
+    """Эндпоинт для сборки точного PDF макета A4 по размерам в см"""
+    try:
+        items_config = []
+        engine = A4LayoutEngine()
+
+        for item in payload.items:
+            img_data = item.image_base64
+            if "," in img_data:
+                img_data = img_data.split(",")[1]
+            
+            image_bytes = base64.b64decode(img_data)
+            img = Image.open(io.BytesIO(image_bytes))
+
+            items_config.append({
+                "image": img,
+                "type": item.type,
+                "size": item.size,
+                "copies": item.copies
+            })
+
+        output_filename = f"layout_{os.urandom(4).hex()}.pdf"
+        sheets_count = engine.generate_pdf(items_config, output_filename)
+
+        return {
+            "success": True,
+            "sheets_count": sheets_count,
+            "download_url": f"/api/download/{output_filename}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/download/{filename}")
+async def download_pdf(filename: str):
+    if os.path.exists(filename):
+        return FileResponse(filename, media_type="application/pdf", filename="sugar_print_layout.pdf")
+    raise HTTPException(status_code=404, detail="Файл не найден")
+
+
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.accept()
@@ -61,9 +118,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     try:
         while True:
             raw_message = await websocket.receive_text()
-            
-            prompt = ""
-            file_obj = None
+            prompt, file_obj = "", None
             
             try:
                 data = json.loads(raw_message)
@@ -73,28 +128,23 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             except json.JSONDecodeError:
                 prompt = raw_message
 
-            required_credits = CREDIT_COST
-            credit_result = check_and_deduct_credits(client_email, required_credits)
-            can_proceed = credit_result.get("success", False)
-            current_balance = credit_result.get("credits", 0)
-
-            if not can_proceed:
+            credit_result = check_and_deduct_credits(client_email, CREDIT_COST)
+            if not credit_result.get("success", False):
                 await websocket.send_text(json.dumps({
                     "type": "text", 
-                    "credits": current_balance,
-                    "text": f"💎 Недостаточно кредитов! Требуется: {required_credits} кр., а на балансе: {current_balance} кр."
+                    "credits": credit_result.get("credits", 0),
+                    "text": f"💎 Недостаточно кредитов! Требуется: {CREDIT_COST} кр."
                 }))
                 continue
             
             await websocket.send_text(json.dumps({
                 "type": "text", 
-                "credits": current_balance,
+                "credits": credit_result.get("credits", 0),
                 "text": "🪄 Генерация композиции для макета..."
             }))
             
             try:
                 contents = []
-                
                 if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
                     img_data = file_obj.get('data')
                     if ',' in img_data:
@@ -103,18 +153,16 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     mime_type = file_obj.get('mimeType') or 'image/jpeg'
                     contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
                 
-                # НОВЫЙ ТОЧНЫЙ ПРОМПТ ПОД СТИЛЬ ПРИМЕРА (ПЕРСОНАЖ + КЛИПАРТЫ ВОКРУГ)
                 strict_art_prompt = (
                     f"Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
                     f"КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
-                    f"Вокруг него на светлом фоне (допускается легкая текстура тетрадной клетки или пастельный узор) аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты, относящиеся к теме. "
-                    f"Композиция сбалансирована для вписывания в круг. "
+                    f"Вокруг него на светлом фоне аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты. "
                     f"СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, слов или текста на изображении!"
                 )
                 contents.append(strict_art_prompt)
 
                 config_params = types.GenerateContentConfig(
-                    system_instruction="Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем и разбросанными вокруг тематическими мини-элементами на светлом фоне. НИКОГДА не добавляй текст.",
+                    system_instruction="Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем и разбросанными вокруг мини-элементами на светлом фоне. НИКОГДА не добавляй текст.",
                     response_modalities=["TEXT", "IMAGE"]
                 )
                 
@@ -124,18 +172,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     config=config_params
                 )
                 
-                text_output = ""
-                image_data = None
-                mime_type = "image/jpeg"
-                
-                all_parts = []
-                try:
-                    if hasattr(response, 'parts') and response.parts:
-                        all_parts = response.parts
-                    elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                        all_parts = response.candidates[0].content.parts
-                except Exception as ex:
-                    print(f"⚠️ Ошибка чтения parts: {ex}")
+                text_output, image_data, mime_type = "", None, "image/jpeg"
+                all_parts = response.parts if hasattr(response, 'parts') and response.parts else response.candidates[0].content.parts
 
                 for part in all_parts:
                     p_text = getattr(part, 'text', None)
@@ -146,10 +184,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     if inline:
                         raw_bytes = getattr(inline, 'data', None)
                         if raw_bytes:
-                            if isinstance(raw_bytes, bytes):
-                                image_data = base64.b64encode(raw_bytes).decode('utf-8')
-                            elif isinstance(raw_bytes, str):
-                                image_data = raw_bytes
+                            image_data = base64.b64encode(raw_bytes).decode('utf-8') if isinstance(raw_bytes, bytes) else raw_bytes
                             mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or 'image/jpeg'
 
                 if image_data:
@@ -157,26 +192,22 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                         "type": "art",
                         "data": image_data,
                         "mimeType": mime_type,
-                        "credits": current_balance,
+                        "credits": credit_result.get("credits", 0),
                         "text": "✨ Композиция успешно создана!"
                     }
                 else:
-                    requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
-                    response_payload = {
-                        "type": "text",
-                        "credits": current_balance,
-                        "text": "⚠️ Не удалось сформировать арт. Кредиты возвращены."
-                    }
+                    requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": CREDIT_COST}, timeout=10)
+                    response_payload = {"type": "text", "credits": credit_result.get("credits", 0), "text": "⚠️ Не удалось сформировать арт. Кредиты возвращены."}
                 
                 await websocket.send_text(json.dumps(response_payload))
 
             except Exception as e:
-                err_str = str(e)
-                requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
-                await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
+                requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": CREDIT_COST}, timeout=10)
+                await websocket.send_text(json.dumps({"type": "text", "credits": credit_result.get("credits", 0), "text": f"Ошибка: {str(e)}"}))
                 
     except WebSocketDisconnect:
-        print(f"Кондитер отключился.")
+        print("Кондитер отключился.")
+
 
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
@@ -187,7 +218,7 @@ async def authenticate_user(request: Request):
         return response.json() if response.status_code == 200 else {"success": False}
     except Exception as e: return {"success": False, "error": str(e)}
 
-@app.post("/create-payment")
+
 @app.post("/api/create-payment")
 async def create_payment_endpoint(request: Request):
     try:
@@ -213,7 +244,7 @@ async def create_payment_endpoint(request: Request):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-@app.post("/yookassa-webhook")
+
 @app.post("/api/yookassa-webhook")
 async def yookassa_webhook(request: Request):
     try:
@@ -227,6 +258,7 @@ async def yookassa_webhook(request: Request):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    uvicorn.run("main_cake:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
