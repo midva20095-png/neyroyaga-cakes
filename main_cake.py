@@ -62,7 +62,6 @@ CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
 CREDIT_PACKS = {50: 50, 100: 100, 250: 250, 500: 500}
-PROCESSED_PAYMENTS: set = set()
 PUBLIC_URL = os.getenv("PUBLIC_URL", "https://neyroyaga-cakes-production.up.railway.app")
 ORDER_NOTIFY_URL = os.getenv("ORDER_NOTIFY_URL")  # необязательно: куда слать уведомление о новом заказе
 STYLES = {  # стиль приходит из Tilda отдельным полем, а не приклеенным к тексту
@@ -93,32 +92,58 @@ REF_PROMPT = (
 
 
 # ---------- Google Sheets (кредиты). requests блокирующий -> уходит в поток ----------
-async def sheet(payload: dict, timeout: int = 25):
+def _sheets_call(payload: dict, timeout: int):
+    """Один запрос к Apps Script. Он отвечает редиректом на script.googleusercontent.com/macros/echo:
+    POST шлём один раз, ответ забираем GET-ом (его можно повторять, 404 там бывает временным)."""
+    r = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=timeout, allow_redirects=False)
+    for _ in range(3):
+        if not r.is_redirect:
+            break
+        loc = r.headers["Location"]
+        for attempt in range(3):
+            r = requests.get(loc, timeout=timeout)
+            if r.status_code != 404:
+                break
+            time.sleep(0.8 * (attempt + 1))
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:120]!r}")
+    try:
+        return r.json()
+    except ValueError:
+        raise RuntimeError(f"ответ не JSON: {r.text[:160]!r}")
+
+
+async def sheet(payload: dict, timeout: int = 20, tries: int = 3):
+    """Все кредиты живут в Google-таблице. У каждого запроса есть request_id, и скрипт таблицы
+    повторный запрос с тем же id не выполняет дважды — поэтому при таймауте можно спокойно повторить."""
     if not GOOGLE_SCRIPT_URL:
         return None  # режим разработки без таблицы
-
-    def call():
-        r = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-
-    try:
-        return await asyncio.to_thread(call)
-    except Exception as e:
-        print(f"❌ Google Sheets: {e}")
-        return {"success": False}
+    payload = {**payload, "request_id": payload.get("request_id") or uuid.uuid4().hex}
+    for attempt in range(1, tries + 1):
+        try:
+            return await asyncio.to_thread(_sheets_call, payload, timeout)
+        except Exception as e:
+            print(f"❌ Таблица ({payload.get('action')}, попытка {attempt}/{tries}): {e}")
+            if attempt < tries:
+                await asyncio.sleep(1.5 * attempt)
+    return {"success": False, "unavailable": True}
 
 
-async def deduct(email: str, cost: int) -> dict:
-    res = await sheet({"action": "deduct", "email": email, "cost": cost})
+async def deduct(email: str, cost: int, request_id: str = None) -> dict:
+    res = await sheet({"action": "deduct", "email": (email or "").strip(), "cost": cost, "request_id": request_id})
     if res is None:
         return {"success": True, "credits": 999}
+    if res.get("unavailable"):
+        return {"success": False, "credits": None, "unavailable": True}
     return {"success": bool(res.get("success")), "credits": res.get("credits", 0)}
 
 
-async def add_credits(email: str, amount: int) -> bool:
-    res = await sheet({"action": "add", "email": email, "amount": amount}, 15)
-    return res is None or res.get("success", True) is not False
+async def add_credits(email: str, amount: int, request_id: str = None) -> bool:
+    res = await sheet({"action": "add", "email": (email or "").strip(), "amount": amount, "request_id": request_id}, 20)
+    ok = res is None or res.get("success", True) is not False
+    if not ok:
+        print(f"⚠️ НЕ УДАЛОСЬ начислить {amount} кр. для {email} — поправьте баланс в таблице вручную")
+    return ok
 
 
 # ---------- Макет A4 ----------
@@ -162,13 +187,16 @@ async def paid_job(email: str, kind: str, fn, *args):
     email = (email or "").strip()
     if not email:
         raise HTTPException(status_code=401, detail="Войдите в аккаунт")
-    res = await deduct(email, PRICES[kind])
+    op = uuid.uuid4().hex
+    res = await deduct(email, PRICES[kind], op)
+    if res.get("unavailable"):
+        raise HTTPException(status_code=503, detail="Таблица с балансом не отвечает. Повторите через минуту, кредиты не списаны.")
     if not res["success"]:
-        raise HTTPException(status_code=402, detail=f"Недостаточно кредитов: нужно {PRICES[kind]} кр.")
+        raise HTTPException(status_code=402, detail=f"Недостаточно кредитов: нужно {PRICES[kind]} кр., на балансе {res['credits']} кр.")
     try:
         return await asyncio.to_thread(fn, *args), res["credits"]
     except Exception as e:
-        await add_credits(email, PRICES[kind])
+        await add_credits(email, PRICES[kind], "refund:" + op)
         if isinstance(e, ValueError):
             raise HTTPException(status_code=400, detail=str(e))
         traceback.print_exc()
@@ -270,8 +298,10 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     async def send(text, credits, type_="text", done=True, **extra):
         await websocket.send_text(json.dumps({"type": type_, "credits": credits, "text": text, "done": done, **extra}))
 
-    balance = (await deduct(client_email, 0))["credits"]
-    await send("🎂 Добро пожаловать в студию макетов!", balance)
+    first = await deduct(client_email, 0)
+    balance = first["credits"]
+    await send("⚠️ Таблица с балансом не отвечает, обновите страницу." if first.get("unavailable")
+               else "🎂 Добро пожаловать в студию макетов!", balance)
     try:
         while True:
             raw = await websocket.receive_text()
@@ -288,10 +318,14 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 await send("✍️ Опишите, что нарисовать, или приложите референс.", balance)
                 continue  # пустой запрос больше не списывает кредиты
 
-            res = await deduct(client_email, CREDIT_COST)
+            op = uuid.uuid4().hex
+            res = await deduct(client_email, CREDIT_COST, op)
+            if res.get("unavailable"):
+                await send("⚠️ Таблица с балансом не отвечает. Повторите через минуту, кредиты не списаны.", balance)
+                continue
             balance = res["credits"]
             if not res["success"]:
-                await send(f"💎 Недостаточно кредитов! Требуется: {CREDIT_COST} кр.", balance)
+                await send(f"💎 Недостаточно кредитов: нужно {CREDIT_COST} кр., на балансе {balance} кр.", balance)
                 continue
             await send("🪄 Генерация композиции для макета...", balance, done=False)
 
@@ -300,7 +334,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
-                await add_credits(client_email, CREDIT_COST)
+                await add_credits(client_email, CREDIT_COST, "refund:" + op)
                 balance += CREDIT_COST
                 await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
                 continue
@@ -317,6 +351,8 @@ async def authenticate_user(request: Request):
         return {"success": True}
     data = await request.json()
     res = await sheet({"action": "auth", "email": data.get("email"), "password": data.get("password")})
+    if isinstance(res, dict) and res.get("unavailable"):
+        return {"success": False, "error": "Сервис входа временно недоступен. Повторите через минуту."}
     return res if isinstance(res, dict) else {"success": False}
 
 
@@ -360,7 +396,7 @@ async def create_payment_endpoint(request: Request):
 async def yookassa_webhook(request: Request):
     event = await request.json()
     pid = str((event.get("object") or {}).get("id") or "")
-    if event.get("event") != "payment.succeeded" or not YOOKASSA_SHOP_ID or pid in PROCESSED_PAYMENTS:
+    if event.get("event") != "payment.succeeded" or not YOOKASSA_SHOP_ID:
         return {"status": "ok"}
     if not re.fullmatch(r"[\w-]{10,64}", pid):
         return {"status": "ok"}
@@ -372,9 +408,10 @@ async def yookassa_webhook(request: Request):
     meta = pay.get("metadata") or {}
     credits = int(meta.get("credits") or 0)
     if pay.get("status") == "succeeded" and pay.get("paid") and meta.get("email") and credits in CREDIT_PACKS:
-        if not await add_credits(meta["email"], credits):
+        # op_id = номер платежа: повторный вебхук от YooKassa не начислит кредиты дважды
+        if not await add_credits(meta["email"], credits, f"pay:{pid}"):  # тот же id -> не начислится дважды
             raise HTTPException(status_code=500, detail="credits not added")  # YooKassa повторит вебхук
-        PROCESSED_PAYMENTS.add(pid)
+        print(f"💰 Оплата {pid}: {meta['email']} +{credits} кр.")
     return {"status": "ok"}
 
 
