@@ -57,7 +57,7 @@ RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
 SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
 # 1 кредит = 1 ₽. Каждый готовый результат платный; цены правятся ТОЛЬКО здесь.
-PRICES = {"ai": 50, "pdf": 50}  # ai — одна генерация макета ИИ, pdf — один готовый PDF для печати
+PRICES = {"ai": 50, "pdf": 50, "fix": 25}  # ai — генерация макета, pdf — готовый PDF, fix — доработка одной вырезанной детали
 CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
@@ -82,6 +82,18 @@ ART_PROMPT = (
     "пирожные, сладости и любая еда, если их нет в описании.\n"
     "3. Один цельный объект (или группа из описания) по центру, на ровном чисто белом фоне, без теней на фоне, рамок и узоров.\n"
     "4. Никаких надписей, букв, цифр и логотипов."
+)
+FIX_PROMPT = (
+    "На изображении — фрагмент, который пользователь вырезал из своей картинки прямоугольной рамкой, "
+    "поэтому края рваные и по углам остался лишний фон.\n"
+    "ЗАДАЧА: перерисуй ТОЛЬКО главный объект этого фрагмента аккуратно и целиком.\n"
+    "ПРАВИЛА:\n"
+    "1. Сохрани форму, цвета, стиль и все детали объекта — это тот же объект, а не новый.\n"
+    "2. Дорисуй части, срезанные рамкой, чтобы объект был целым.\n"
+    "3. Убери весь посторонний фон и обрывки соседних предметов. Фон — ровный чисто белый.\n"
+    "4. Ровные чистые края, объект по центру, целиком в кадре, с небольшим отступом от краёв.\n"
+    "5. Никаких надписей, букв, цифр, рамок и теней на фоне.\n"
+    "{extra}"
 )
 REF_PROMPT = (
     "Выше {n} изображений-образцов: это детали, выбранные пользователем. Воспроизведи их форму, цвета и стиль "
@@ -152,6 +164,7 @@ class ItemConfig(BaseModel):
     type: Literal["height", "width", "diameter"]
     size: float = Field(gt=0, le=27.3)  # см; рабочая зона A4 — 18.6 × 27.3 см
     copies: int = Field(default=1, ge=1, le=100)
+    outline: float = Field(default=0, ge=0, le=5)  # белая обводка под вырезание, мм
 
 
 class LayoutRequest(BaseModel):
@@ -168,16 +181,16 @@ def cleanup_old_files():
 
 
 def make_pdf(entries, prefix="layout"):
-    """entries: [(картинка base64, type, size_cm, copies)] -> (имя файла, число листов)"""
+    """entries: [(картинка base64, type, size_cm, copies, outline_mm)] -> (имя файла, число листов)"""
     cleanup_old_files()
     items = []
-    for n, (b64, typ, size, copies) in enumerate(entries, 1):
+    for n, (b64, typ, size, copies, *rest) in enumerate(entries, 1):
         try:
             img = Image.open(io.BytesIO(base64.b64decode((b64 or "").split(",", 1)[-1])))
             img.load()
         except Exception:
             raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
-        items.append({"image": img, "type": typ, "size": size, "copies": copies})
+        items.append({"image": img, "type": typ, "size": size, "copies": copies, "outline": rest[0] if rest else 0})
     name = f"{prefix}_{os.urandom(8).hex()}.pdf"
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
 
@@ -210,7 +223,7 @@ def config():
 
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
-    entries = [(i.image_base64, i.type, i.size, i.copies) for i in payload.items]
+    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline) for i in payload.items]
     (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
@@ -264,10 +277,12 @@ def _part(src: str):
     return types.Part.from_bytes(data=base64.b64decode(src.split(",", 1)[-1]), mime_type=mime)
 
 
-def generate_art(prompt: str, file_obj, style: str = "", refs=None) -> tuple:
+def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = "art") -> tuple:
     sources = ([file_obj["data"]] if isinstance(file_obj, dict) and file_obj.get("data") else []) + list(refs or [])
     contents = [_part(src) for src in sources[:6]]
-    if contents:
+    if mode == "fix" and contents:          # доработка одной вырезанной детали
+        text = FIX_PROMPT.format(extra=("6. Пожелание пользователя: " + prompt) if prompt else "")
+    elif contents:
         text = REF_PROMPT.format(n=len(contents), prompt=prompt or "по образцам")
     else:
         text = ART_PROMPT.format(prompt=prompt)
@@ -305,40 +320,43 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     try:
         while True:
             raw = await websocket.receive_text()
-            prompt, file_obj, style, refs = raw.strip()[:500], None, "", []
+            prompt, file_obj, style, refs, mode = raw.strip()[:500], None, "", [], "art"
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict):
                     prompt, file_obj = str(data.get("prompt") or "").strip()[:500], data.get("file")
                     style = str(data.get("style") or "")
                     refs = [r for r in (data.get("refs") or []) if isinstance(r, str)][:6]
+                    mode = "fix" if data.get("mode") == "fix" and refs else "art"
             except json.JSONDecodeError:
                 pass
             if not prompt and not refs and not (isinstance(file_obj, dict) and file_obj.get("data")):
                 await send("✍️ Опишите, что нарисовать, или приложите референс.", balance)
                 continue  # пустой запрос больше не списывает кредиты
 
+            cost = PRICES["fix"] if mode == "fix" else PRICES["ai"]
             op = uuid.uuid4().hex
-            res = await deduct(client_email, CREDIT_COST, op)
+            res = await deduct(client_email, cost, op)
             if res.get("unavailable"):
                 await send("⚠️ Таблица с балансом не отвечает. Повторите через минуту, кредиты не списаны.", balance)
                 continue
             balance = res["credits"]
             if not res["success"]:
-                await send(f"💎 Недостаточно кредитов: нужно {CREDIT_COST} кр., на балансе {balance} кр.", balance)
+                await send(f"💎 Недостаточно кредитов: нужно {cost} кр., на балансе {balance} кр.", balance)
                 continue
-            await send("🪄 Генерация композиции для макета...", balance, done=False)
+            await send("🪄 Дорабатываю деталь..." if mode == "fix" else "🪄 Генерация композиции для макета...", balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
-                print(f"🎨 Генерация для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}")
-                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs)
+                print(f"🎨 {mode} для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}, списано {cost} кр.")
+                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs, mode)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
-                await add_credits(client_email, CREDIT_COST, "refund:" + op)
-                balance += CREDIT_COST
+                await add_credits(client_email, cost, "refund:" + op)
+                balance += cost
                 await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
                 continue
-            await send("✨ Макет готов! Он добавлен в список «Макет A4».", balance, "art", data=image_b64, mimeType=mime)
+            await send("✨ Деталь готова! Она добавлена в список «Макет A4»." if mode == "fix"
+                       else "✨ Макет готов! Он добавлен в список «Макет A4».", balance, "art", data=image_b64, mimeType=mime)
             print(f"✅ Арт отправлен клиенту: {len(image_b64) // 1024} КБ")
     except WebSocketDisconnect:
         print(f"Кондитер {client_email} отключился.")
