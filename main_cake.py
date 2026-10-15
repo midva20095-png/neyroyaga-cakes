@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from google import genai
 from google.genai import types
-from PIL import Image  # раньше не был импортирован -> NameError и ошибка 400 на каждый макет
+from PIL import Image, ImageDraw  # Image раньше не был импортирован -> ошибка 400 на каждый макет
 from pydantic import BaseModel, Field
 from requests.auth import HTTPBasicAuth
 
@@ -28,6 +28,11 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "generated"  # PDF отдельно от кода и .env
 OUTPUT_DIR.mkdir(exist_ok=True)
+# Галерея готовых макетов: просто положите картинки в папку gallery рядом с кодом.
+# Имя файла становится названием: "Единорог с шарами.png" -> «Единорог с шарами».
+GALLERY_DIR = BASE_DIR / "gallery"
+GALLERY_DIR.mkdir(exist_ok=True)
+GALLERY_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 
 app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -170,6 +175,7 @@ class ItemConfig(BaseModel):
     size: float = Field(gt=0, le=27.3)  # см; рабочая зона A4 — 18.6 × 27.3 см
     copies: int = Field(default=1, ge=1, le=100)
     outline: float = Field(default=0, ge=0, le=5)  # белая обводка под вырезание, мм
+    circle: bool = False                           # круглый топпер (капкейки)
 
 
 class LayoutRequest(BaseModel):
@@ -186,7 +192,7 @@ def cleanup_old_files():
 
 
 def make_pdf(entries, prefix="layout"):
-    """entries: [(картинка base64, type, size_cm, copies, outline_mm)] -> (имя файла, число листов)"""
+    """entries: [(картинка base64, type, size_cm, copies, outline_mm, circle)] -> (имя файла, число листов)"""
     cleanup_old_files()
     items = []
     for n, (b64, typ, size, copies, *rest) in enumerate(entries, 1):
@@ -195,7 +201,8 @@ def make_pdf(entries, prefix="layout"):
             img.load()
         except Exception:
             raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
-        items.append({"image": img, "type": typ, "size": size, "copies": copies, "outline": rest[0] if rest else 0})
+        items.append({"image": img, "type": typ, "size": size, "copies": copies,
+                      "outline": rest[0] if rest else 0, "circle": bool(rest[1]) if len(rest) > 1 else False})
     name = f"{prefix}_{os.urandom(8).hex()}.pdf"
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
 
@@ -228,9 +235,144 @@ def config():
 
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
-    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline) for i in payload.items]
+    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline, i.circle) for i in payload.items]
     (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
+
+
+def gallery_items():
+    return sorted((f for f in GALLERY_DIR.iterdir() if f.suffix.lower() in GALLERY_EXT), key=lambda f: f.name.lower())
+
+
+def gallery_file(item_id: str) -> Path:
+    for f in gallery_items():
+        if f.stem == item_id:
+            return f
+    raise HTTPException(status_code=404, detail="Макет не найден")
+
+
+@app.get("/api/gallery")
+def gallery_list():
+    return [{"id": f.stem, "title": f.stem.replace("_", " "), "preview": f"/api/gallery-preview/{f.stem}"}
+            for f in gallery_items()]
+
+
+@app.get("/api/gallery-preview/{item_id}")
+def gallery_preview(item_id: str):
+    """Превью: мелкое и с водяным знаком, чтобы его нельзя было напечатать вместо покупки."""
+    src = gallery_file(item_id)
+    out = OUTPUT_DIR / f"preview_{item_id}.png"
+    if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+        img = Image.open(src).convert("RGBA")
+        img.thumbnail((520, 520), Image.Resampling.LANCZOS)
+        mark = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(mark)
+        for y in range(-img.height, img.height * 2, 90):
+            for x in range(-img.width, img.width, 190):
+                d.text((x + (y % 180), y), "НейроЯга · образец", fill=(120, 120, 120, 110))
+        img.alpha_composite(mark.rotate(30, resample=Image.BICUBIC, center=(img.width // 2, img.height // 2)))
+        img.convert("RGB").save(out, "PNG")
+    return FileResponse(out, media_type="image/png")
+
+
+class CutRequest(BaseModel):
+    image_base64: str
+    x: float = Field(ge=0, le=1)   # куда кликнули, доля ширины
+    y: float = Field(ge=0, le=1)   # доля высоты
+
+
+@app.post("/api/autocut")
+def autocut(p: CutRequest):
+    """Выделение по объекту: берём фигурку, на которую кликнули, со всеми её мелкими деталями."""
+    try:
+        img = Image.open(io.BytesIO(base64.b64decode(p.image_base64.split(",", 1)[-1])))
+        img.load()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Не удалось прочитать изображение")
+
+    img = img.convert("RGBA")
+    if max(img.size) > 1600:                       # ускоряем работу на больших фото
+        img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+    engine = A4LayoutEngine()
+    cleaned = engine.drop_background(img)          # фон, связанный с краями, становится прозрачным
+    solid = cleaned.getchannel("A").point(lambda v: 255 if v > 40 else 0)
+
+    px, py = min(img.width - 1, int(p.x * img.width)), min(img.height - 1, int(p.y * img.height))
+    if solid.getpixel((px, py)) == 0:              # попали в фон — ищем ближайший объект
+        found = None
+        for r in range(4, 160, 4):
+            for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r), (r, r), (-r, -r), (r, -r), (-r, r)):
+                nx, ny = px + dx, py + dy
+                if 0 <= nx < img.width and 0 <= ny < img.height and solid.getpixel((nx, ny)):
+                    found = (nx, ny)
+                    break
+            if found:
+                break
+        if not found:
+            raise HTTPException(status_code=400, detail="В этом месте только фон — кликните по самой фигурке")
+        px, py = found
+
+    picked = solid.copy()                          # заливкой помечаем связную фигурку
+    ImageDraw.floodfill(picked, (px, py), 128, thresh=0)
+    region = picked.point(lambda v: 255 if v == 128 else 0)
+    box = region.getbbox()
+    if not box:
+        raise HTTPException(status_code=400, detail="Не удалось выделить объект")
+
+    # прихватываем мелочи рядом (усы, брызги, искры): расширяем рамку, пока рядом находятся детали
+    for _ in range(4):
+        pad = max(12, round(max(box[2] - box[0], box[3] - box[1]) * 0.07))
+        wide = (max(0, box[0] - pad), max(0, box[1] - pad),
+                min(img.width, box[2] + pad), min(img.height, box[3] + pad))
+        near_box = solid.crop(wide).getbbox()      # что из объектов попало в расширенную рамку
+        if not near_box:
+            box = wide
+            break
+        grown = (wide[0] + near_box[0], wide[1] + near_box[1], wide[0] + near_box[2], wide[1] + near_box[3])
+        if grown == box:                            # рамка перестала расти — рядом больше ничего нет
+            box = wide
+            break
+        box = grown
+    near = Image.new("L", img.size, 0)
+    near.paste(solid.crop(box), (box[0], box[1]))
+
+    out = cleaned.crop(box)
+    out.putalpha(near.crop(box))
+    flat = Image.new("RGB", out.size, (255, 255, 255))
+    flat.paste(out, mask=out.getchannel("A"))      # на белом фоне: дальше с ним работают так же, как с остальными
+    buf = io.BytesIO()
+    flat.save(buf, "PNG")
+    return {"success": True, "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
+
+
+class GalleryBuy(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    item_id: str = Field(min_length=1, max_length=200)
+    width_mm: float = Field(gt=10, le=210)
+    height_mm: float = Field(gt=10, le=297)
+    circle: bool = False
+    copies: int = Field(default=1, ge=1, le=100)
+
+
+def make_gallery_pdf(p: GalleryBuy) -> str:
+    cleanup_old_files()
+    img = Image.open(gallery_file(p.item_id))
+    img.load()
+    name = f"layout_{os.urandom(8).hex()}.pdf"
+    engine = A4LayoutEngine()
+    if p.copies > 1:                      # несколько штук — раскладываем на листы как наклейки
+        engine.generate_pdf([{"image": img, "type": "diameter" if p.circle else "width",
+                              "size": p.width_mm / 10, "copies": p.copies,
+                              "outline": 2.5, "circle": p.circle}], str(OUTPUT_DIR / name))
+    else:
+        engine.export_exact(img, p.width_mm, p.width_mm if p.circle else p.height_mm, p.circle, str(OUTPUT_DIR / name))
+    return name
+
+
+@app.post("/api/gallery-buy")   # готовый макет из галереи (платно)
+async def gallery_buy(p: GalleryBuy):
+    name, credits = await paid_job(p.email, "pdf", make_gallery_pdf, p)
+    return {"success": True, "sheets_count": 1, "download_url": f"/api/download/{name}", "credits": credits}
 
 
 class ExactRequest(BaseModel):

@@ -184,11 +184,32 @@ class A4LayoutEngine:
         halo.alpha_composite(base)                        # картинка поверх канта
         return halo.crop(halo.getchannel("A").getbbox())
 
-    def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0):
-        """Trim + пропорциональный ресайз под сантиметры (300 DPI)."""
+    @staticmethod
+    def to_circle(img, diameter_px: int):
+        """Вписывает картинку в КРУГ заданного диаметра — так режут топперы для капкейков."""
+        side = max(1, diameter_px)
+        k = min(side / img.width, side / img.height) * 0.88      # белое поле внутри круга = запас под ножницы
+        fitted = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.Resampling.LANCZOS)
+        disc = Image.new("RGBA", (side, side), (255, 255, 255, 255))
+        disc.alpha_composite(fitted, ((side - fitted.width) // 2, (side - fitted.height) // 2))
+        big = Image.new("L", (side * 4, side * 4), 0)            # сглаженный край круга
+        ImageDraw.Draw(big).ellipse((0, 0, side * 4 - 1, side * 4 - 1), fill=255)
+        disc.putalpha(big.resize((side, side), Image.Resampling.LANCZOS))
+        return disc
+
+    def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0,
+                      circle: bool = False):
+        """Trim + пропорциональный ресайз под сантиметры (300 DPI).
+        circle=True — фигурка вписывается в круглый топпер заданного диаметра."""
         img = Image.open(img_input) if isinstance(img_input, str) else img_input
         img = self.drop_background(img.convert("RGBA"))
         img = self._trim(img)
+        if circle:
+            # у круглого топпера линия реза — сам круг, поэтому внешний кант не добавляем:
+            # иначе диаметр вырастал (6 -> 6.5 см) и на лист влезало меньше штук
+            target = max(1, round(target_size_cm * CM_PX))
+            disc = self.to_circle(img, target)
+            return disc, target, target
         if outline_mm > 0:
             img = self.add_outline(img, round(outline_mm * MM_PX))
         w, h = img.size
@@ -215,7 +236,8 @@ class A4LayoutEngine:
         max_h = (PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM) / 10
 
         for n, cfg in enumerate(items_config, 1):
-            img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"], float(cfg.get("outline", 0) or 0))
+            img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"],
+                                           float(cfg.get("outline", 0) or 0), bool(cfg.get("circle")))
             bw, bh = w + self.gap_px, h + self.gap_px
             fits = (bw <= bin_w and bh <= bin_h) or (bh <= bin_w and bw <= bin_h)
             if not fits:
