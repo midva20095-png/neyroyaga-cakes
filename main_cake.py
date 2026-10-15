@@ -32,7 +32,23 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+_client = None
+
+
+def get_client():
+    """Клиент Gemini создаётся при первой генерации, а не при старте:
+    раньше пустой GEMINI_API_KEY валил весь сервер (ValueError при импорте)."""
+    global _client
+    if _client is None:
+        key = os.getenv("GEMINI_API_KEY")
+        if not key:
+            raise RuntimeError("на сервере не задан GEMINI_API_KEY")
+        _client = genai.Client(api_key=key)
+    return _client
+
+
+if not os.getenv("GEMINI_API_KEY"):
+    print("⚠️ GEMINI_API_KEY не задан: сайт и PDF-макеты работают, генерация арта — нет")
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
@@ -207,7 +223,7 @@ def generate_art(prompt: str, file_obj, style: str = "") -> tuple:
         contents.append(types.Part.from_bytes(data=base64.b64decode(raw), mime_type=file_obj.get("mimeType") or "image/jpeg"))
     contents.append(ART_PROMPT.format(prompt=prompt or "по присланному референсу") + STYLES.get(style, ""))
 
-    response = client.models.generate_content(
+    response = get_client().models.generate_content(
         model=SINGLE_MODEL,
         contents=contents,
         config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, response_modalities=["TEXT", "IMAGE"]),
