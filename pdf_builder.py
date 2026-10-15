@@ -1,7 +1,6 @@
 import os
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
-from rectpack import newPacker
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
@@ -47,6 +46,75 @@ def _load_font():
 
 
 FONT, HAS_CYRILLIC = _load_font()
+
+
+def pack_rects(rects, bin_w, bin_h):
+    """Раскладка прямоугольников по листам (алгоритм максимальных свободных областей).
+    rects: [(ширина, высота, id)] -> [(номер листа, x, y, ширина, высота, id)].
+    Любой элемент гарантированно лежит внутри листа: координаты берутся из свободной области,
+    которая целиком помещается на лист. Повороты на 90° разрешены."""
+    placed, bins = [], []                       # bins: список свободных областей каждого листа
+
+    def fit(free, w, h):
+        return w <= free[2] and h <= free[3]
+
+    def split(free, x, y, w, h):
+        """Разрезает свободную область вокруг занятого места."""
+        fx, fy, fw, fh = free
+        if x >= fx + fw or x + w <= fx or y >= fy + fh or y + h <= fy:
+            return [free]                       # не пересекаются
+        out = []
+        if y > fy:
+            out.append((fx, fy, fw, y - fy))                       # сверху
+        if y + h < fy + fh:
+            out.append((fx, y + h, fw, fy + fh - y - h))           # снизу
+        if x > fx:
+            out.append((fx, fy, x - fx, fh))                       # слева
+        if x + w < fx + fw:
+            out.append((x + w, fy, fx + fw - x - w, fh))           # справа
+        return out
+
+    def prune(free_list):
+        """Убирает области, целиком лежащие внутри других."""
+        keep = []
+        for i, a in enumerate(free_list):
+            if a[2] <= 0 or a[3] <= 0:
+                continue
+            inside = any(
+                i != j and a[0] >= b[0] and a[1] >= b[1]
+                and a[0] + a[2] <= b[0] + b[2] and a[1] + a[3] <= b[1] + b[3]
+                and (a[2] * a[3] < b[2] * b[3] or i > j)
+                for j, b in enumerate(free_list)
+            )
+            if not inside:
+                keep.append(a)
+        return keep
+
+    order = sorted(rects, key=lambda r: (-max(r[0], r[1]), -r[0] * r[1]))
+    for w, h, rid in order:
+        best = None                              # (лишний край, номер листа, x, y, w, h)
+        for b, free_list in enumerate(bins):
+            for fx, fy, fw, fh in free_list:
+                for cw, ch in ((w, h), (h, w)) if w != h else ((w, h),):
+                    if fit((fx, fy, fw, fh), cw, ch):
+                        score = (min(fw - cw, fh - ch), max(fw - cw, fh - ch))
+                        if best is None or score < best[0]:
+                            best = (score, b, fx, fy, cw, ch)
+        if best is None:                         # не влезло никуда — заводим новый лист
+            if w > bin_w or h > bin_h:
+                if h > bin_w or w > bin_h:
+                    raise ValueError("элемент не помещается на лист")
+                w, h = h, w
+            bins.append([(0, 0, bin_w, bin_h)])
+            best = (None, len(bins) - 1, 0, 0, w, h)
+        _, b, x, y, cw, ch = best
+        assert x >= 0 and y >= 0 and x + cw <= bin_w and y + ch <= bin_h, "элемент вышел за лист"
+        placed.append((b, x, y, cw, ch, rid))
+        new_free = []
+        for free in bins[b]:
+            new_free.extend(split(free, x, y, cw, ch))
+        bins[b] = prune(new_free)
+    return placed
 
 
 class A4LayoutEngine:
@@ -139,15 +207,17 @@ class A4LayoutEngine:
     def generate_pdf(self, items_config: list, output_pdf_path: str) -> int:
         """items_config: [{"image": PIL.Image, "type": "height|width|diameter", "size": см, "copies": n}]
         Возвращает число листов A4."""
-        packer = newPacker(rotation=True)
-        groups, owners = [], []          # уникальные картинки; owners[rid] -> индекс картинки
-        max_w = (PAGE_W_MM - 2 * MARGIN_MM - GAP_MM) / 10
-        max_h = (PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM - GAP_MM) / 10
+        rects, groups, owners = [], [], []   # уникальные картинки; owners[rid] -> индекс картинки
+        # лист для укладки берём на один зазор больше: крайним элементам зазор по внешней
+        # стороне не нужен, иначе в ряд не влезает лишняя колонка (12 кругов по 6 см уходили на 2 листа)
+        bin_w, bin_h = self.work_w_px + self.gap_px, self.work_h_px + self.gap_px
+        max_w = (PAGE_W_MM - 2 * MARGIN_MM) / 10
+        max_h = (PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM) / 10
 
         for n, cfg in enumerate(items_config, 1):
             img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"], float(cfg.get("outline", 0) or 0))
             bw, bh = w + self.gap_px, h + self.gap_px
-            fits = (bw <= self.work_w_px and bh <= self.work_h_px) or (bh <= self.work_w_px and bw <= self.work_h_px)
+            fits = (bw <= bin_w and bh <= bin_h) or (bh <= bin_w and bw <= bin_h)
             if not fits:
                 raise ValueError(
                     f"Картинка №{n} ({w / CM_PX:.1f}×{h / CM_PX:.1f} см) не помещается на A4: "
@@ -155,18 +225,15 @@ class A4LayoutEngine:
                 )
             groups.append({"img": img, "w": w, "h": h, "bw": bw, "bh": bh})
             for _ in range(max(1, int(cfg.get("copies", 1)))):
-                packer.add_rect(bw, bh, rid=len(owners))
+                rects.append((bw, bh, len(owners)))
                 owners.append(len(groups) - 1)
 
-        # add_bin(count=1) по умолчанию даёт ОДИН лист — всё, что не влезло, rectpack молча выбрасывал.
-        packer.add_bin(self.work_w_px, self.work_h_px, count=len(owners))
-        packer.pack()
-        rects = packer.rect_list()
-        if len(rects) != len(owners):
+        result = pack_rects(rects, bin_w, bin_h)
+        if len(result) != len(owners):
             raise ValueError("Не удалось разместить все элементы на листах A4. Уменьшите размеры.")
 
         pages = {}
-        for b, x, y, w, h, rid in rects:
+        for b, x, y, w, h, rid in result:
             pages.setdefault(b, []).append((x, y, w, h, rid))
 
         c = canvas.Canvas(output_pdf_path, pagesize=A4)
@@ -178,7 +245,7 @@ class A4LayoutEngine:
             self._draw_service_marks(c)
             for x, y, w, h, rid in pages[b]:
                 g = groups[owners[rid]]
-                rotated = (w, h) != (g["bw"], g["bh"])   # rectpack повернул ячейку на 90°
+                rotated = (w, h) != (g["bw"], g["bh"])   # ячейку положили боком
                 iw, ih = (g["h"], g["w"]) if rotated else (g["w"], g["h"])
                 key = "rot" if rotated else "std"
                 if key not in g:                          # одна картинка = один объект на все копии
