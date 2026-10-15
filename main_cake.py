@@ -8,7 +8,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -45,6 +45,13 @@ CREDIT_COST = 5
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
 CREDIT_PACKS = {50: 290, 150: 790, 400: 1790}
 PROCESSED_PAYMENTS: set = set()
+PUBLIC_URL = os.getenv("PUBLIC_URL", "https://neyroyaga-cakes-production.up.railway.app")
+ORDER_NOTIFY_URL = os.getenv("ORDER_NOTIFY_URL")  # необязательно: куда слать уведомление о новом заказе
+STYLES = {  # стиль приходит из Tilda отдельным полем, а не приклеенным к тексту
+    "cartoon": " Стиль: яркий мультяшный.", "watercolor": " Стиль: нежная акварель.",
+    "flat": " Стиль: плоская векторная графика, минимализм.", "3d": " Стиль: объёмный 3D-рендер.",
+    "realistic": " Стиль: реалистичный.", "line-art": " Стиль: чистый контурный лайн-арт.",
+}
 
 SYSTEM_PROMPT = (
     "Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем "
@@ -99,28 +106,33 @@ class LayoutRequest(BaseModel):
     items: List[ItemConfig] = Field(min_length=1, max_length=50)
 
 
-def cleanup_old_pdfs(max_age: int = 3600):
-    for f in OUTPUT_DIR.glob("layout_*.pdf"):
-        if time.time() - f.stat().st_mtime > max_age:
+def cleanup_old_files():
+    now = time.time()
+    for f in OUTPUT_DIR.glob("*"):
+        ttl = 7 * 86400 if f.name.startswith("order_") else 3600  # заказы храним неделю
+        if f.is_file() and now - f.stat().st_mtime > ttl:
             f.unlink(missing_ok=True)
+
+
+def make_pdf(entries, prefix="layout"):
+    """entries: [(картинка base64, type, size_cm, copies)] -> (имя файла, число листов)"""
+    cleanup_old_files()
+    items = []
+    for n, (b64, typ, size, copies) in enumerate(entries, 1):
+        try:
+            img = Image.open(io.BytesIO(base64.b64decode((b64 or "").split(",", 1)[-1])))
+            img.load()
+        except Exception:
+            raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
+        items.append({"image": img, "type": typ, "size": size, "copies": copies})
+    name = f"{prefix}_{os.urandom(8).hex()}.pdf"
+    return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
 
 
 @app.post("/api/generate-pdf")
 def generate_pdf_endpoint(payload: LayoutRequest):  # обычный def: FastAPI сам уводит его в поток
     try:
-        cleanup_old_pdfs()
-        items = []
-        for n, it in enumerate(payload.items, 1):
-            raw = it.image_base64.split(",", 1)[-1]
-            try:
-                img = Image.open(io.BytesIO(base64.b64decode(raw)))
-                img.load()
-            except Exception:
-                raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
-            items.append({"image": img, "type": it.type, "size": it.size, "copies": it.copies})
-
-        name = f"layout_{os.urandom(8).hex()}.pdf"
-        sheets = A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
+        name, sheets = make_pdf([(i.image_base64, i.type, i.size, i.copies) for i in payload.items])
         return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -129,10 +141,52 @@ def generate_pdf_endpoint(payload: LayoutRequest):  # обычный def: FastAP
         raise HTTPException(status_code=500, detail="Внутренняя ошибка при сборке PDF")
 
 
+class RegionIn(BaseModel):
+    num: int = 0
+    image: Optional[str] = None
+    size_type: Literal["height", "width", "diameter"] = "height"
+    size_cm: float = Field(default=5, gt=0, le=27.3)
+    copies: int = Field(default=1, ge=1, le=200)
+    comment: str = Field(default="", max_length=500)
+
+
+class OrderRequest(BaseModel):
+    email: str = ""
+    regions: List[RegionIn] = Field(min_length=1, max_length=50)
+
+
+@app.post("/api/regions")  # раньше этого эндпоинта не было — «Собрать заказ на вырезку» всегда падал
+def create_order(payload: OrderRequest):
+    try:
+        for n, r in enumerate(payload.regions, 1):
+            if not r.image:
+                raise ValueError(f"Регион №{r.num or n}: нет изображения, выделите область заново")
+        name, sheets = make_pdf([(r.image, r.size_type, r.size_cm, r.copies) for r in payload.regions], "order")
+        order_id = name[len("order_"):-len(".pdf")]
+        meta = {
+            "order_id": order_id, "email": payload.email, "sheets": sheets,
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "pdf": f"{PUBLIC_URL}/api/download/{name}",
+            "regions": [r.model_dump(exclude={"image"}) for r in payload.regions],
+        }
+        (OUTPUT_DIR / f"order_{order_id}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+        if ORDER_NOTIFY_URL:
+            try:
+                requests.post(ORDER_NOTIFY_URL, json=meta, timeout=10)
+            except Exception as e:
+                print(f"❌ Уведомление о заказе: {e}")
+        return {"success": True, "order_id": order_id, "sheets_count": sheets, "download_url": f"/api/download/{name}"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка при создании заказа")
+
+
 @app.get("/api/download/{filename}")
 def download_pdf(filename: str):
     # Раньше отдавался ЛЮБОЙ файл рядом с кодом, включая .env с ключами.
-    if not re.fullmatch(r"layout_[0-9a-f]{16}\.pdf", filename):
+    if not re.fullmatch(r"(?:layout|order)_[0-9a-f]{16}\.pdf", filename):
         raise HTTPException(status_code=404, detail="Файл не найден")
     path = OUTPUT_DIR / filename
     if not path.is_file():
@@ -146,12 +200,12 @@ def index():
 
 
 # ---------- Генерация арта ----------
-def generate_art(prompt: str, file_obj) -> tuple:
+def generate_art(prompt: str, file_obj, style: str = "") -> tuple:
     contents = []
     if isinstance(file_obj, dict) and file_obj.get("data"):
         raw = file_obj["data"].split(",", 1)[-1]
         contents.append(types.Part.from_bytes(data=base64.b64decode(raw), mime_type=file_obj.get("mimeType") or "image/jpeg"))
-    contents.append(ART_PROMPT.format(prompt=prompt or "по присланному референсу"))
+    contents.append(ART_PROMPT.format(prompt=prompt or "по присланному референсу") + STYLES.get(style, ""))
 
     response = client.models.generate_content(
         model=SINGLE_MODEL,
@@ -177,11 +231,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     try:
         while True:
             raw = await websocket.receive_text()
-            prompt, file_obj = raw.strip()[:500], None
+            prompt, file_obj, style = raw.strip()[:500], None, ""
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict):
                     prompt, file_obj = str(data.get("prompt") or "").strip()[:500], data.get("file")
+                    style = str(data.get("style") or "")
             except json.JSONDecodeError:
                 pass
             if not prompt and not (isinstance(file_obj, dict) and file_obj.get("data")):
@@ -196,7 +251,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await send("🪄 Генерация композиции для макета...", balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
-                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj)
+                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
                 await add_credits(client_email, CREDIT_COST)
