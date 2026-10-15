@@ -152,7 +152,6 @@ class ItemConfig(BaseModel):
     type: Literal["height", "width", "diameter"]
     size: float = Field(gt=0, le=27.3)  # см; рабочая зона A4 — 18.6 × 27.3 см
     copies: int = Field(default=1, ge=1, le=100)
-    outline: float = Field(default=0, ge=0, le=5)  # белая обводка под вырезание, мм
 
 
 class LayoutRequest(BaseModel):
@@ -169,16 +168,16 @@ def cleanup_old_files():
 
 
 def make_pdf(entries, prefix="layout"):
-    """entries: [(картинка base64, type, size_cm, copies, outline_mm)] -> (имя файла, число листов)"""
+    """entries: [(картинка base64, type, size_cm, copies)] -> (имя файла, число листов)"""
     cleanup_old_files()
     items = []
-    for n, (b64, typ, size, copies, *rest) in enumerate(entries, 1):
+    for n, (b64, typ, size, copies) in enumerate(entries, 1):
         try:
             img = Image.open(io.BytesIO(base64.b64decode((b64 or "").split(",", 1)[-1])))
             img.load()
         except Exception:
             raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
-        items.append({"image": img, "type": typ, "size": size, "copies": copies, "outline": rest[0] if rest else 0})
+        items.append({"image": img, "type": typ, "size": size, "copies": copies})
     name = f"{prefix}_{os.urandom(8).hex()}.pdf"
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
 
@@ -211,7 +210,7 @@ def config():
 
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
-    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline) for i in payload.items]
+    entries = [(i.image_base64, i.type, i.size, i.copies) for i in payload.items]
     (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
