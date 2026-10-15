@@ -1,6 +1,7 @@
 import os
 
-from PIL import Image, ImageChops, ImageDraw
+import numpy as np
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from rectpack import newPacker
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -14,8 +15,10 @@ MM_PX = DPI / 25.4      # пикселей в 1 мм
 CM_PX = DPI / 2.54      # пикселей в 1 см
 PX_PT = 72.0 / DPI      # пиксель -> пункт ReportLab
 PAGE_W_MM, PAGE_H_MM = 210, 297
-MARGIN_MM = 10          # поля листа
+MARGIN_MM = 10          # поля сверху и по бокам
+MARGIN_BOTTOM_MM = 18   # «мёртвая зона» принтера снизу: туда элементы не ставим
 GAP_MM = 4              # зазор между элементами для вырезания
+OUTLINE_MM = 2.5        # белая обводка под вырезание ножницами
 
 # Helvetica в ReportLab не содержит кириллицы (вместо букв — чёрные квадраты), поэтому ищем TTF.
 # Свой шрифт: положите DejaVuSans.ttf в папку fonts/ рядом с кодом или задайте PDF_FONT_PATH.
@@ -52,7 +55,7 @@ class A4LayoutEngine:
         self.gap_px = round(GAP_MM * MM_PX)
         self.margin_px = round(MARGIN_MM * MM_PX)
         self.work_w_px = round((PAGE_W_MM - 2 * MARGIN_MM) * MM_PX)
-        self.work_h_px = round((PAGE_H_MM - 2 * MARGIN_MM) * MM_PX)
+        self.work_h_px = round((PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM) * MM_PX)
 
     @staticmethod
     def _trim(img, tol=18):
@@ -67,10 +70,61 @@ class A4LayoutEngine:
             box = diff.convert("L").point(lambda v: 255 if v > tol else 0).getbbox()
         return img.crop(box) if box else img
 
-    def prepare_image(self, img_input, size_type: str, target_size_cm: float):
+    @staticmethod
+    def drop_background(img, tol=26):
+        """Убирает ровный фон (белый у картинок Gemini) — иначе кондитер печатает лишнюю бумагу.
+        Берётся только фон, связанный с краями: белые участки внутри рисунка остаются."""
+        if img.getchannel("A").getextrema()[0] < 250:
+            return img                                   # прозрачность уже есть, не трогаем
+        a = np.asarray(img.convert("RGB"), dtype=np.int16)
+        h, w = a.shape[:2]
+        corners = np.array([a[0, 0], a[0, w - 1], a[h - 1, 0], a[h - 1, w - 1]], dtype=np.int16)
+        bg = np.median(corners, axis=0)
+        same = (np.abs(a - bg).max(axis=2) <= tol)       # пиксели цвета фона
+        # заливка от краёв: фоном считаем только то, что связано с рамкой листа
+        reach = np.zeros_like(same)
+        reach[0, :], reach[-1, :], reach[:, 0], reach[:, -1] = same[0, :], same[-1, :], same[:, 0], same[:, -1]
+        prev = -1
+        while reach.sum() != prev:                       # растим область, пока она меняется
+            prev = reach.sum()
+            grown = reach.copy()
+            grown[1:, :] |= reach[:-1, :]
+            grown[:-1, :] |= reach[1:, :]
+            grown[:, 1:] |= reach[:, :-1]
+            grown[:, :-1] |= reach[:, 1:]
+            reach = grown & same
+        out = img.copy()
+        alpha = np.asarray(out.getchannel("A")).copy()
+        alpha[reach] = 0
+        out.putalpha(Image.fromarray(alpha))
+        return out
+
+    @staticmethod
+    def add_outline(img, width_px: int, color=(255, 255, 255, 255)):
+        """Белый кант вокруг картинки: по нему кондитер режет ножницами, не ломая мелкие детали."""
+        if width_px < 1:
+            return img
+        pad = width_px + 2
+        base = Image.new("RGBA", (img.width + 2 * pad, img.height + 2 * pad), (0, 0, 0, 0))
+        base.paste(img, (pad, pad))
+        mask = base.getchannel("A").point(lambda v: 255 if v > 40 else 0)
+        grown, left = mask, width_px
+        while left > 0:                                   # расширяем силуэт шагами по 3 px: это быстро
+            step = min(3, left)
+            grown = grown.filter(ImageFilter.MaxFilter(2 * step + 1))
+            left -= step
+        halo = Image.new("RGBA", base.size, color)
+        halo.putalpha(grown)
+        halo.alpha_composite(base)                        # картинка поверх канта
+        return halo.crop(halo.getchannel("A").getbbox())
+
+    def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0):
         """Trim + пропорциональный ресайз под сантиметры (300 DPI)."""
         img = Image.open(img_input) if isinstance(img_input, str) else img_input
-        img = self._trim(img.convert("RGBA"))
+        img = self.drop_background(img.convert("RGBA"))
+        img = self._trim(img)
+        if outline_mm > 0:
+            img = self.add_outline(img, round(outline_mm * MM_PX))
         w, h = img.size
         target = max(1, round(target_size_cm * CM_PX))
         if size_type == "height":
@@ -90,10 +144,10 @@ class A4LayoutEngine:
         packer = newPacker(rotation=True)
         groups, owners = [], []          # уникальные картинки; owners[rid] -> индекс картинки
         max_w = (PAGE_W_MM - 2 * MARGIN_MM - GAP_MM) / 10
-        max_h = (PAGE_H_MM - 2 * MARGIN_MM - GAP_MM) / 10
+        max_h = (PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM - GAP_MM) / 10
 
         for n, cfg in enumerate(items_config, 1):
-            img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"])
+            img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"], float(cfg.get("outline", 0) or 0))
             bw, bh = w + self.gap_px, h + self.gap_px
             fits = (bw <= self.work_w_px and bh <= self.work_h_px) or (bh <= self.work_w_px and bw <= self.work_h_px)
             if not fits:
@@ -159,7 +213,7 @@ class A4LayoutEngine:
         c.setTitle("Sugar print exact size")
         x, y = (A4[0] - w_mm * mm) / 2, (A4[1] - h_mm * mm) / 2
         c.drawImage(ImageReader(fitted), x, y, w_mm * mm, h_mm * mm, mask="auto")
-        if y >= 10 * mm:                      # служебная линейка — только если есть место в поле листа
+        if y >= MARGIN_BOTTOM_MM * mm:        # служебная линейка — только если есть место в поле листа
             self._draw_service_marks(c)
         c.save()
 
