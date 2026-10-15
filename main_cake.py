@@ -1,264 +1,282 @@
-import os
-import json
+import asyncio
 import base64
-import uuid
 import io
+import json
+import os
+import re
+import time
+import traceback
+import uuid
+from pathlib import Path
+from typing import List, Literal
+
 import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
-from fastapi.responses import FileResponse
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from requests.auth import HTTPBasicAuth
-from pydantic import BaseModel
-from typing import List
+from fastapi.responses import FileResponse
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
+from PIL import Image  # раньше не был импортирован -> NameError и ошибка 400 на каждый макет
+from pydantic import BaseModel, Field
+from requests.auth import HTTPBasicAuth
+
 from pdf_builder import A4LayoutEngine
 
 load_dotenv()
 
-app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "generated"  # PDF отдельно от кода и .env
+OUTPUT_DIR.mkdir(exist_ok=True)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+YOOKASSA_AUTH = HTTPBasicAuth(YOOKASSA_SHOP_ID or "", YOOKASSA_SECRET_KEY or "")
+RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
-SINGLE_MODEL = 'gemini-3.1-flash-image'
+SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
 CREDIT_COST = 5
+# Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
+# и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
+CREDIT_PACKS = {50: 290, 150: 790, 400: 1790}
+PROCESSED_PAYMENTS: set = set()
 
-def check_and_deduct_credits(email: str, cost: int) -> dict:
+SYSTEM_PROMPT = (
+    "Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем "
+    "и разбросанными вокруг мини-элементами на светлом фоне. НИКОГДА не добавляй текст."
+)
+ART_PROMPT = (
+    "Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
+    "КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
+    "Вокруг него на светлом фоне аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты. "
+    "СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, слов или текста на изображении!"
+)
+
+
+# ---------- Google Sheets (кредиты). requests блокирующий -> уходит в поток ----------
+async def sheet(payload: dict, timeout: int = 25):
     if not GOOGLE_SCRIPT_URL:
-        return {"success": True, "credits": 999}
-    try:
-        payload = {"action": "deduct", "email": email, "cost": cost}
-        response = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=25)
-        if response.status_code != 200:
-            return {"success": False, "credits": 0}
-        res_data = response.json()
-        return {"success": res_data.get("success", False), "credits": res_data.get("credits", 0)}
-    except Exception as e:
-        print(f"❌ Ошибка Google Sheets: {e}")
-        return {"success": False, "credits": 0}
+        return None  # режим разработки без таблицы
 
-# Pydantic модели для генерации PDF-макета
+    def call():
+        r = requests.post(GOOGLE_SCRIPT_URL, json=payload, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+
+    try:
+        return await asyncio.to_thread(call)
+    except Exception as e:
+        print(f"❌ Google Sheets: {e}")
+        return {"success": False}
+
+
+async def deduct(email: str, cost: int) -> dict:
+    res = await sheet({"action": "deduct", "email": email, "cost": cost})
+    if res is None:
+        return {"success": True, "credits": 999}
+    return {"success": bool(res.get("success")), "credits": res.get("credits", 0)}
+
+
+async def add_credits(email: str, amount: int) -> bool:
+    res = await sheet({"action": "add", "email": email, "amount": amount}, 15)
+    return res is None or res.get("success", True) is not False
+
+
+# ---------- Макет A4 ----------
 class ItemConfig(BaseModel):
-    image_base64: str  # Картинка в base64
-    type: str          # 'height', 'width', 'diameter'
-    size: float        # Размер в сантиметрах
-    copies: int = 1    # Количество копий
+    image_base64: str
+    type: Literal["height", "width", "diameter"]
+    size: float = Field(gt=0, le=27.3)  # см; рабочая зона A4 — 18.6 × 27.3 см
+    copies: int = Field(default=1, ge=1, le=100)
+
 
 class LayoutRequest(BaseModel):
-    items: List[ItemConfig]
+    items: List[ItemConfig] = Field(min_length=1, max_length=50)
+
+
+def cleanup_old_pdfs(max_age: int = 3600):
+    for f in OUTPUT_DIR.glob("layout_*.pdf"):
+        if time.time() - f.stat().st_mtime > max_age:
+            f.unlink(missing_ok=True)
 
 
 @app.post("/api/generate-pdf")
-async def generate_pdf_endpoint(payload: LayoutRequest):
-    """Эндпоинт для сборки точного PDF макета A4 по размерам в см"""
+def generate_pdf_endpoint(payload: LayoutRequest):  # обычный def: FastAPI сам уводит его в поток
     try:
-        items_config = []
-        engine = A4LayoutEngine()
+        cleanup_old_pdfs()
+        items = []
+        for n, it in enumerate(payload.items, 1):
+            raw = it.image_base64.split(",", 1)[-1]
+            try:
+                img = Image.open(io.BytesIO(base64.b64decode(raw)))
+                img.load()
+            except Exception:
+                raise ValueError(f"Картинка №{n}: не удалось прочитать изображение")
+            items.append({"image": img, "type": it.type, "size": it.size, "copies": it.copies})
 
-        for item in payload.items:
-            img_data = item.image_base64
-            if "," in img_data:
-                img_data = img_data.split(",")[1]
-            
-            image_bytes = base64.b64decode(img_data)
-            img = Image.open(io.BytesIO(image_bytes))
-
-            items_config.append({
-                "image": img,
-                "type": item.type,
-                "size": item.size,
-                "copies": item.copies
-            })
-
-        output_filename = f"layout_{os.urandom(4).hex()}.pdf"
-        sheets_count = engine.generate_pdf(items_config, output_filename)
-
-        return {
-            "success": True,
-            "sheets_count": sheets_count,
-            "download_url": f"/api/download/{output_filename}"
-        }
-    except Exception as e:
+        name = f"layout_{os.urandom(8).hex()}.pdf"
+        sheets = A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
+        return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}"}
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка при сборке PDF")
 
 
 @app.get("/api/download/{filename}")
-async def download_pdf(filename: str):
-    if os.path.exists(filename):
-        return FileResponse(filename, media_type="application/pdf", filename="sugar_print_layout.pdf")
-    raise HTTPException(status_code=404, detail="Файл не найден")
+def download_pdf(filename: str):
+    # Раньше отдавался ЛЮБОЙ файл рядом с кодом, включая .env с ключами.
+    if not re.fullmatch(r"layout_[0-9a-f]{16}\.pdf", filename):
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    path = OUTPUT_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл устарел — соберите макет заново")
+    return FileResponse(path, media_type="application/pdf", filename="sugar_print_layout.pdf")
+
+
+@app.get("/")
+def index():
+    return FileResponse(BASE_DIR / "static" / "index.html")
+
+
+# ---------- Генерация арта ----------
+def generate_art(prompt: str, file_obj) -> tuple:
+    contents = []
+    if isinstance(file_obj, dict) and file_obj.get("data"):
+        raw = file_obj["data"].split(",", 1)[-1]
+        contents.append(types.Part.from_bytes(data=base64.b64decode(raw), mime_type=file_obj.get("mimeType") or "image/jpeg"))
+    contents.append(ART_PROMPT.format(prompt=prompt or "по присланному референсу"))
+
+    response = client.models.generate_content(
+        model=SINGLE_MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, response_modalities=["TEXT", "IMAGE"]),
+    )
+    for part in response.parts or []:
+        inline = getattr(part, "inline_data", None)
+        if inline and inline.data:
+            return base64.b64encode(inline.data).decode(), inline.mime_type or "image/png"
+    raise RuntimeError("модель не вернула изображение (возможно, сработал фильтр безопасности)")
 
 
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.accept()
-    print(f"🎂 Кондитер {client_email} подключился!")
-    
-    init_result = check_and_deduct_credits(client_email, 0)
-    initial_balance = init_result.get("credits", 0)
-    
-    await websocket.send_text(json.dumps({
-        "type": "text",
-        "credits": initial_balance,
-        "text": "🎂 Добро пожаловать в студию макетов!"
-    }))
 
+    async def send(text, credits, type_="text", done=True, **extra):
+        await websocket.send_text(json.dumps({"type": type_, "credits": credits, "text": text, "done": done, **extra}))
+
+    balance = (await deduct(client_email, 0))["credits"]
+    await send("🎂 Добро пожаловать в студию макетов!", balance)
     try:
         while True:
-            raw_message = await websocket.receive_text()
-            prompt, file_obj = "", None
-            
+            raw = await websocket.receive_text()
+            prompt, file_obj = raw.strip()[:500], None
             try:
-                data = json.loads(raw_message)
+                data = json.loads(raw)
                 if isinstance(data, dict):
-                    prompt = data.get('prompt', '')
-                    file_obj = data.get('file') 
+                    prompt, file_obj = str(data.get("prompt") or "").strip()[:500], data.get("file")
             except json.JSONDecodeError:
-                prompt = raw_message
+                pass
+            if not prompt and not (isinstance(file_obj, dict) and file_obj.get("data")):
+                await send("✍️ Опишите, что нарисовать, или приложите референс.", balance)
+                continue  # пустой запрос больше не списывает кредиты
 
-            credit_result = check_and_deduct_credits(client_email, CREDIT_COST)
-            if not credit_result.get("success", False):
-                await websocket.send_text(json.dumps({
-                    "type": "text", 
-                    "credits": credit_result.get("credits", 0),
-                    "text": f"💎 Недостаточно кредитов! Требуется: {CREDIT_COST} кр."
-                }))
+            res = await deduct(client_email, CREDIT_COST)
+            balance = res["credits"]
+            if not res["success"]:
+                await send(f"💎 Недостаточно кредитов! Требуется: {CREDIT_COST} кр.", balance)
                 continue
-            
-            await websocket.send_text(json.dumps({
-                "type": "text", 
-                "credits": credit_result.get("credits", 0),
-                "text": "🪄 Генерация композиции для макета..."
-            }))
-            
-            try:
-                contents = []
-                if file_obj and isinstance(file_obj, dict) and file_obj.get('data'):
-                    img_data = file_obj.get('data')
-                    if ',' in img_data:
-                        img_data = img_data.split(',')[1]
-                    file_bytes = base64.b64decode(img_data)
-                    mime_type = file_obj.get('mimeType') or 'image/jpeg'
-                    contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
-                
-                strict_art_prompt = (
-                    f"Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
-                    f"КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
-                    f"Вокруг него на светлом фоне аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты. "
-                    f"СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, слов или текста на изображении!"
-                )
-                contents.append(strict_art_prompt)
+            await send("🪄 Генерация композиции для макета...", balance, done=False)
 
-                config_params = types.GenerateContentConfig(
-                    system_instruction="Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем и разбросанными вокруг мини-элементами на светлом фоне. НИКОГДА не добавляй текст.",
-                    response_modalities=["TEXT", "IMAGE"]
-                )
-                
-                response = client.models.generate_content(
-                    model=SINGLE_MODEL,
-                    contents=contents,
-                    config=config_params
-                )
-                
-                text_output, image_data, mime_type = "", None, "image/jpeg"
-                all_parts = response.parts if hasattr(response, 'parts') and response.parts else response.candidates[0].content.parts
-
-                for part in all_parts:
-                    p_text = getattr(part, 'text', None)
-                    if p_text:
-                        text_output += ("\n" if text_output else "") + p_text
-                    
-                    inline = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
-                    if inline:
-                        raw_bytes = getattr(inline, 'data', None)
-                        if raw_bytes:
-                            image_data = base64.b64encode(raw_bytes).decode('utf-8') if isinstance(raw_bytes, bytes) else raw_bytes
-                            mime_type = getattr(inline, 'mime_type', None) or getattr(inline, 'mimeType', None) or 'image/jpeg'
-
-                if image_data:
-                    response_payload = {
-                        "type": "art",
-                        "data": image_data,
-                        "mimeType": mime_type,
-                        "credits": credit_result.get("credits", 0),
-                        "text": "✨ Композиция успешно создана!"
-                    }
-                else:
-                    requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": CREDIT_COST}, timeout=10)
-                    response_payload = {"type": "text", "credits": credit_result.get("credits", 0), "text": "⚠️ Не удалось сформировать арт. Кредиты возвращены."}
-                
-                await websocket.send_text(json.dumps(response_payload))
-
+            try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
+                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj)
             except Exception as e:
-                requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": CREDIT_COST}, timeout=10)
-                await websocket.send_text(json.dumps({"type": "text", "credits": credit_result.get("credits", 0), "text": f"Ошибка: {str(e)}"}))
-                
+                print(f"❌ Генерация: {e}")
+                await add_credits(client_email, CREDIT_COST)
+                balance += CREDIT_COST
+                await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
+                continue
+            await send("✨ Композиция успешно создана!", balance, "art", data=image_b64, mimeType=mime)
     except WebSocketDisconnect:
-        print("Кондитер отключился.")
+        print(f"Кондитер {client_email} отключился.")
 
 
+# ---------- Авторизация и оплата ----------
 @app.post("/api/auth")
 async def authenticate_user(request: Request):
-    if not GOOGLE_SCRIPT_URL: return {"success": True}
-    try:
-        data = await request.json()
-        response = requests.post(GOOGLE_SCRIPT_URL, json={"action": "auth", "email": data.get("email"), "password": data.get("password")}, timeout=25)
-        return response.json() if response.status_code == 200 else {"success": False}
-    except Exception as e: return {"success": False, "error": str(e)}
+    if not GOOGLE_SCRIPT_URL:
+        return {"success": True}
+    data = await request.json()
+    res = await sheet({"action": "auth", "email": data.get("email"), "password": data.get("password")})
+    return res if isinstance(res, dict) else {"success": False}
+
+
+@app.get("/api/packs")
+def packs():
+    return [{"credits": c, "amount": a} for c, a in CREDIT_PACKS.items()]
 
 
 @app.post("/api/create-payment")
 async def create_payment_endpoint(request: Request):
     try:
         data = await request.json()
-        email, amount, credits_count = data.get("email"), data.get("amount"), data.get("credits")
-        if not email or not amount or not credits_count:
-            return {"success": False, "error": "Missing required fields"}
+        email = str(data.get("email") or "").strip()
+        credits = int(data.get("credits") or 0)
+        amount = CREDIT_PACKS.get(credits)
+        if not email or amount is None:
+            return {"success": False, "error": "Неизвестный пакет кредитов"}
+        if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+            return {"success": True, "confirmation_url": "https://yookassa.ru"}  # режим разработки
 
-        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
-            return {"success": True, "confirmation_url": "https://yookassa.ru"}
-
-        url = "https://api.yookassa.ru/v3/payments"
         payload = {
-            "amount": {"value": f"{float(amount):.2f}", "currency": "RUB"},
+            "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
             "capture": True,
-            "confirmation": {"type": "redirect", "return_url": "https://babayagaland.ru/"},
-            "description": f"Покупка {credits_count} кредитов ({email})",
-            "metadata": {"email": email, "credits": int(credits_count)}
+            "confirmation": {"type": "redirect", "return_url": RETURN_URL},
+            "description": f"Покупка {credits} кредитов ({email})",
+            "metadata": {"email": email, "credits": credits},
         }
-        response = requests.post(url, json=payload, auth=HTTPBasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY), headers={"Idempotence-Key": str(uuid.uuid4())}, timeout=10)
-        res_json = response.json()
-        return {"success": True, "confirmation_url": res_json.get("confirmation", {}).get("confirmation_url")}
+        res = await asyncio.to_thread(
+            lambda: requests.post(
+                "https://api.yookassa.ru/v3/payments", json=payload, auth=YOOKASSA_AUTH,
+                headers={"Idempotence-Key": str(uuid.uuid4())}, timeout=15,
+            ).json()
+        )
+        url = (res.get("confirmation") or {}).get("confirmation_url")
+        return {"success": bool(url), "confirmation_url": url, "error": None if url else res.get("description", "Ошибка YooKassa")}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
 @app.post("/api/yookassa-webhook")
 async def yookassa_webhook(request: Request):
-    try:
-        event_json = await request.json()
-        if event_json.get("event") == "payment.succeeded":
-            meta = event_json.get("object", {}).get("metadata", {})
-            email, add_cr = meta.get("email"), int(meta.get("credits", 0))
-            if email and add_cr > 0:
-                requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": email, "amount": add_cr}, timeout=25)
+    event = await request.json()
+    pid = str((event.get("object") or {}).get("id") or "")
+    if event.get("event") != "payment.succeeded" or not YOOKASSA_SHOP_ID or pid in PROCESSED_PAYMENTS:
         return {"status": "ok"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    if not re.fullmatch(r"[\w-]{10,64}", pid):
+        return {"status": "ok"}
+    # Тело вебхука может прислать кто угодно (раньше это давало бесплатные кредиты) —
+    # поэтому статус и метаданные перепроверяются напрямую в YooKassa.
+    pay = await asyncio.to_thread(
+        lambda: requests.get(f"https://api.yookassa.ru/v3/payments/{pid}", auth=YOOKASSA_AUTH, timeout=15).json()
+    )
+    meta = pay.get("metadata") or {}
+    credits = int(meta.get("credits") or 0)
+    if pay.get("status") == "succeeded" and pay.get("paid") and meta.get("email") and credits in CREDIT_PACKS:
+        if not await add_credits(meta["email"], credits):
+            raise HTTPException(status_code=500, detail="credits not added")  # YooKassa повторит вебхук
+        PROCESSED_PAYMENTS.add(pid)
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main_cake:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

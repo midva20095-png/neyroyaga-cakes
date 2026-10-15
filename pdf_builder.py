@@ -90,7 +90,7 @@ class A4LayoutEngine:
                     "id": item_id_counter,
                     "img": img_obj,
                     "w_px": w_px,
-                    "h_px": h_px,
+                    "h_px": h_px,  # Исправлено: сохраняем как h_px
                     "box_w": box_w,
                     "box_h": box_h
                 })
@@ -111,7 +111,7 @@ class A4LayoutEngine:
             b_idx, rx, ry, rw, rh, rid = r
             if b_idx not in sheets_data:
                 sheets_data[b_idx] = []
-            sheets_data[b_idx].append((rx, ry, rid))
+            sheets_data[b_idx].append((rx, ry, rid, rh)) # Передаем rh для корректного расчета Y
 
         for b_idx, placed_rects in sheets_data.items():
             if b_idx > 0:
@@ -121,14 +121,14 @@ class A4LayoutEngine:
             self._draw_service_marks(c)
 
             # Отрисовка картинок
-            for rx, ry, rid, in placed_rects:
+            for rx, ry, rid, rh in placed_rects:
                 item = next(it for it in processed_items if it["id"] == rid)
                 
                 pos_x_pt = px_to_pt(self.margin_px + rx + (self.gap_px / 2))
                 pos_y_pt = pt(PAGE_HEIGHT_MM) - px_to_pt(self.margin_px + ry + rh) + px_to_pt(self.gap_px / 2)
                 
                 w_pt = px_to_pt(item["w_px"])
-                h_pt = px_to_pt(item["h_pt"])
+                h_pt = px_to_pt(item["h_px"])  # Исправлено: читаем правильный ключ h_px
                 
                 temp_img_path = f"_temp_{rid}.png"
                 item["img"].save(temp_img_path, "PNG")
