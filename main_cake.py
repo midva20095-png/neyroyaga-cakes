@@ -103,7 +103,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     mime_type = file_obj.get('mimeType') or 'image/jpeg'
                     contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
                 
-                # НОВЫЙ ТОЧНЫЙ ПРОМПТ ПОД СТИЛЬ ПРИМЕРА (ПЕРСОНАЖ + КЛИПАРТЫ ВОКРУГ)
+                # Точный промпт для иллюстрации
                 strict_art_prompt = (
                     f"Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
                     f"КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
@@ -171,6 +171,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 await websocket.send_text(json.dumps(response_payload))
 
             except Exception as e:
+                # Добавлено логирование ошибки в консоль сервера для точной диагностики
+                print(f"❌ Ошибка генерации ИИ: {e}")
                 err_str = str(e)
                 requests.post(GOOGLE_SCRIPT_URL, json={"action": "add", "email": client_email, "amount": required_credits}, timeout=10)
                 await websocket.send_text(json.dumps({"type": "text", "credits": current_balance, "text": f"Ошибка: {err_str}"}))
