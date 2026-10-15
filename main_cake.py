@@ -250,11 +250,17 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None) -> tuple:
         contents=contents,
         config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, response_modalities=["TEXT", "IMAGE"]),
     )
-    for part in response.parts or []:
+    cands = getattr(response, "candidates", None) or []
+    parts = getattr(response, "parts", None) or (cands[0].content.parts if cands and cands[0].content else None) or []
+    for part in parts:
         inline = getattr(part, "inline_data", None)
         if inline and inline.data:
-            return base64.b64encode(inline.data).decode(), inline.mime_type or "image/png"
-    raise RuntimeError("модель не вернула изображение (возможно, сработал фильтр безопасности)")
+            data = inline.data if isinstance(inline.data, bytes) else base64.b64decode(inline.data)
+            return base64.b64encode(data).decode(), inline.mime_type or "image/png"
+    reason = getattr(cands[0], "finish_reason", None) if cands else None
+    said = " ".join((getattr(p, "text", "") or "") for p in parts)[:150]
+    print(f"❌ Gemini без изображения: finish_reason={reason} text={said!r}")
+    raise RuntimeError(f"модель не вернула изображение ({reason or 'без причины'}). {said}".strip())
 
 
 @app.websocket("/ws/{client_email}")
@@ -290,6 +296,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await send("🪄 Генерация композиции для макета...", balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
+                print(f"🎨 Генерация для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}")
                 image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
@@ -297,7 +304,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 balance += CREDIT_COST
                 await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
                 continue
-            await send("✨ Композиция успешно создана!", balance, "art", data=image_b64, mimeType=mime)
+            await send("✨ Макет готов! Он добавлен в список «Макет A4».", balance, "art", data=image_b64, mimeType=mime)
+            print(f"✅ Арт отправлен клиенту: {len(image_b64) // 1024} КБ")
     except WebSocketDisconnect:
         print(f"Кондитер {client_email} отключился.")
 
