@@ -1,6 +1,6 @@
 import os
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 from rectpack import newPacker
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -136,6 +136,32 @@ class A4LayoutEngine:
                 c.drawImage(g[key], x_pt, y_pt, iw * PX_PT, ih * PX_PT, mask="auto")
         c.save()
         return len(pages)
+
+    def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path):
+        """Один макет точного размера (в мм) по центру A4. Круг — с круглой обрезкой, остальное — вписывается без искажений."""
+        if w_mm > PAGE_W_MM or h_mm > PAGE_H_MM:
+            raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на A4 (210×297 мм)")
+        img = img.convert("RGBA")
+        tw, th = round(w_mm * MM_PX), round(h_mm * MM_PX)
+        if circle:
+            side = min(img.size)
+            l, t = (img.width - side) // 2, (img.height - side) // 2
+            fitted = img.crop((l, t, l + side, t + side)).resize((tw, th), Image.Resampling.LANCZOS)
+            mask = Image.new("L", (tw * 4, th * 4), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, tw * 4 - 1, th * 4 - 1), fill=255)
+            fitted.putalpha(mask.resize((tw, th), Image.Resampling.LANCZOS))
+        else:
+            k = min(tw / img.width, th / img.height)
+            nw, nh = max(1, round(img.width * k)), max(1, round(img.height * k))
+            fitted = Image.new("RGBA", (tw, th), (255, 255, 255, 255))
+            fitted.alpha_composite(img.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
+        c = canvas.Canvas(output_pdf_path, pagesize=A4)
+        c.setTitle("Sugar print exact size")
+        x, y = (A4[0] - w_mm * mm) / 2, (A4[1] - h_mm * mm) / 2
+        c.drawImage(ImageReader(fitted), x, y, w_mm * mm, h_mm * mm, mask="auto")
+        if y >= 10 * mm:                      # служебная линейка — только если есть место в поле листа
+            self._draw_service_marks(c)
+        c.save()
 
     def _draw_service_marks(self, c):
         """Памятка и линейка 100 мм — целиком в нижнем поле, чтобы не задевать картинки."""

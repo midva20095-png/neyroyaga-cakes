@@ -56,10 +56,12 @@ YOOKASSA_AUTH = HTTPBasicAuth(YOOKASSA_SHOP_ID or "", YOOKASSA_SECRET_KEY or "")
 RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
 SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
-CREDIT_COST = 5
+# 1 кредит = 1 ₽. Каждый готовый результат платный; цены правятся ТОЛЬКО здесь.
+PRICES = {"ai": 50, "pdf": 50}  # ai — одна генерация макета ИИ, pdf — один готовый PDF для печати
+CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
-CREDIT_PACKS = {50: 290, 150: 790, 400: 1790}
+CREDIT_PACKS = {50: 50, 100: 100, 250: 250, 500: 500}
 PROCESSED_PAYMENTS: set = set()
 PUBLIC_URL = os.getenv("PUBLIC_URL", "https://neyroyaga-cakes-production.up.railway.app")
 ORDER_NOTIFY_URL = os.getenv("ORDER_NOTIFY_URL")  # необязательно: куда слать уведомление о новом заказе
@@ -70,14 +72,23 @@ STYLES = {  # стиль приходит из Tilda отдельным поле
 }
 
 SYSTEM_PROMPT = (
-    "Ты — профессиональный иллюстратор кондитерских макетов. Создавай композиции с центральным героем "
-    "и разбросанными вокруг мини-элементами на светлом фоне. НИКОГДА не добавляй текст."
+    "Ты иллюстратор. Выполняй описание буквально: рисуй только то, что названо, ничего не добавляй от себя. "
+    "Никогда не добавляй текст, буквы и цифры."
 )
 ART_PROMPT = (
-    "Создай круговую иллюстрацию для кондитерского макета на тему: {prompt}. "
-    "КОМПОЗИЦИЯ: По центру расположен главный яркий персонаж или объект. "
-    "Вокруг него на светлом фоне аккуратно рассыпаны мелкие тематические элементы, иконки и клипарты. "
-    "СТРОГОЕ ТРЕБОВАНИЕ: Никаких надписей, букв, слов или текста на изображении!"
+    "Нарисуй иллюстрацию строго по описанию: {prompt}.\n"
+    "ПРАВИЛА:\n"
+    "1. Изображай только то, что названо в описании. Ничего не добавляй от себя.\n"
+    "2. Запрещены любые лишние предметы вокруг: звёзды, конфетти, шарики, сердечки, цветы, а также торты, кексы, "
+    "пирожные, сладости и любая еда, если их нет в описании.\n"
+    "3. Один цельный объект (или группа из описания) по центру, на ровном чисто белом фоне, без теней на фоне, рамок и узоров.\n"
+    "4. Никаких надписей, букв, цифр и логотипов."
+)
+REF_PROMPT = (
+    "Выше {n} изображений-образцов: это детали, выбранные пользователем. Воспроизведи их форму, цвета и стиль "
+    "максимально точно и собери результат по описанию: {prompt}.\n"
+    "Не добавляй никаких других предметов (особенно тортов, кексов и еды, если их нет на образцах или в описании). "
+    "Один цельный результат по центру на ровном чисто белом фоне, без надписей."
 )
 
 
@@ -120,6 +131,7 @@ class ItemConfig(BaseModel):
 
 class LayoutRequest(BaseModel):
     items: List[ItemConfig] = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=3, max_length=200)
 
 
 def cleanup_old_files():
@@ -145,58 +157,61 @@ def make_pdf(entries, prefix="layout"):
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
 
 
-@app.post("/api/generate-pdf")
-def generate_pdf_endpoint(payload: LayoutRequest):  # обычный def: FastAPI сам уводит его в поток
+async def paid_job(email: str, kind: str, fn, *args):
+    """Списывает кредиты, делает работу в потоке, при любой ошибке возвращает кредиты."""
+    email = (email or "").strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Войдите в аккаунт")
+    res = await deduct(email, PRICES[kind])
+    if not res["success"]:
+        raise HTTPException(status_code=402, detail=f"Недостаточно кредитов: нужно {PRICES[kind]} кр.")
     try:
-        name, sheets = make_pdf([(i.image_base64, i.type, i.size, i.copies) for i in payload.items])
-        return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        return await asyncio.to_thread(fn, *args), res["credits"]
+    except Exception as e:
+        await add_credits(email, PRICES[kind])
+        if isinstance(e, ValueError):
+            raise HTTPException(status_code=400, detail=str(e))
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Внутренняя ошибка при сборке PDF")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка, кредиты возвращены")
 
 
-class RegionIn(BaseModel):
-    num: int = 0
-    image: Optional[str] = None
-    size_type: Literal["height", "width", "diameter"] = "height"
-    size_cm: float = Field(default=5, gt=0, le=27.3)
-    copies: int = Field(default=1, ge=1, le=200)
-    comment: str = Field(default="", max_length=500)
+@app.get("/api/config")
+def config():
+    return {"prices": PRICES, "packs": [{"credits": c, "amount": a} for c, a in CREDIT_PACKS.items()]}
 
 
-class OrderRequest(BaseModel):
-    email: str = ""
-    regions: List[RegionIn] = Field(min_length=1, max_length=50)
+@app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
+async def generate_pdf_endpoint(payload: LayoutRequest):
+    entries = [(i.image_base64, i.type, i.size, i.copies) for i in payload.items]
+    (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries)
+    return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
 
-@app.post("/api/regions")  # раньше этого эндпоинта не было — «Собрать заказ на вырезку» всегда падал
-def create_order(payload: OrderRequest):
+class ExactRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    image_base64: str
+    width_mm: float = Field(gt=10, le=210)
+    height_mm: float = Field(gt=10, le=297)
+    circle: bool = False
+
+
+def make_exact(p: ExactRequest) -> str:
+    cleanup_old_files()
     try:
-        for n, r in enumerate(payload.regions, 1):
-            if not r.image:
-                raise ValueError(f"Регион №{r.num or n}: нет изображения, выделите область заново")
-        name, sheets = make_pdf([(r.image, r.size_type, r.size_cm, r.copies) for r in payload.regions], "order")
-        order_id = name[len("order_"):-len(".pdf")]
-        meta = {
-            "order_id": order_id, "email": payload.email, "sheets": sheets,
-            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "pdf": f"{PUBLIC_URL}/api/download/{name}",
-            "regions": [r.model_dump(exclude={"image"}) for r in payload.regions],
-        }
-        (OUTPUT_DIR / f"order_{order_id}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-        if ORDER_NOTIFY_URL:
-            try:
-                requests.post(ORDER_NOTIFY_URL, json=meta, timeout=10)
-            except Exception as e:
-                print(f"❌ Уведомление о заказе: {e}")
-        return {"success": True, "order_id": order_id, "sheets_count": sheets, "download_url": f"/api/download/{name}"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        img = Image.open(io.BytesIO(base64.b64decode(p.image_base64.split(",", 1)[-1])))
+        img.load()
     except Exception:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Внутренняя ошибка при создании заказа")
+        raise ValueError("Не удалось прочитать изображение")
+    name = f"layout_{os.urandom(8).hex()}.pdf"
+    h = p.width_mm if p.circle else p.height_mm
+    A4LayoutEngine().export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name))
+    return name
+
+
+@app.post("/api/export-print")  # один макет точного размера по центру A4 (платно)
+async def export_print(p: ExactRequest):
+    name, credits = await paid_job(p.email, "pdf", make_exact, p)
+    return {"success": True, "sheets_count": 1, "download_url": f"/api/download/{name}", "credits": credits}
 
 
 @app.get("/api/download/{filename}")
@@ -216,12 +231,19 @@ def index():
 
 
 # ---------- Генерация арта ----------
-def generate_art(prompt: str, file_obj, style: str = "") -> tuple:
-    contents = []
-    if isinstance(file_obj, dict) and file_obj.get("data"):
-        raw = file_obj["data"].split(",", 1)[-1]
-        contents.append(types.Part.from_bytes(data=base64.b64decode(raw), mime_type=file_obj.get("mimeType") or "image/jpeg"))
-    contents.append(ART_PROMPT.format(prompt=prompt or "по присланному референсу") + STYLES.get(style, ""))
+def _part(src: str):
+    mime = src[5:src.index(";")] if src.startswith("data:") and ";" in src else "image/jpeg"
+    return types.Part.from_bytes(data=base64.b64decode(src.split(",", 1)[-1]), mime_type=mime)
+
+
+def generate_art(prompt: str, file_obj, style: str = "", refs=None) -> tuple:
+    sources = ([file_obj["data"]] if isinstance(file_obj, dict) and file_obj.get("data") else []) + list(refs or [])
+    contents = [_part(src) for src in sources[:6]]
+    if contents:
+        text = REF_PROMPT.format(n=len(contents), prompt=prompt or "по образцам")
+    else:
+        text = ART_PROMPT.format(prompt=prompt)
+    contents.append(text + STYLES.get(style, ""))
 
     response = get_client().models.generate_content(
         model=SINGLE_MODEL,
@@ -247,15 +269,16 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     try:
         while True:
             raw = await websocket.receive_text()
-            prompt, file_obj, style = raw.strip()[:500], None, ""
+            prompt, file_obj, style, refs = raw.strip()[:500], None, "", []
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict):
                     prompt, file_obj = str(data.get("prompt") or "").strip()[:500], data.get("file")
                     style = str(data.get("style") or "")
+                    refs = [r for r in (data.get("refs") or []) if isinstance(r, str)][:6]
             except json.JSONDecodeError:
                 pass
-            if not prompt and not (isinstance(file_obj, dict) and file_obj.get("data")):
+            if not prompt and not refs and not (isinstance(file_obj, dict) and file_obj.get("data")):
                 await send("✍️ Опишите, что нарисовать, или приложите референс.", balance)
                 continue  # пустой запрос больше не списывает кредиты
 
@@ -267,7 +290,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             await send("🪄 Генерация композиции для макета...", balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
-                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style)
+                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
                 await add_credits(client_email, CREDIT_COST)
