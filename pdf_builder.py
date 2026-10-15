@@ -1,6 +1,5 @@
 import os
 
-import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from rectpack import newPacker
 from reportlab.lib.pagesizes import A4
@@ -73,30 +72,29 @@ class A4LayoutEngine:
     @staticmethod
     def drop_background(img, tol=26):
         """Убирает ровный фон (белый у картинок Gemini) — иначе кондитер печатает лишнюю бумагу.
-        Берётся только фон, связанный с краями: белые участки внутри рисунка остаются."""
+        Берётся только фон, связанный с краями листа: белые участки внутри рисунка остаются.
+        Сделано на чистом Pillow, без дополнительных библиотек."""
         if img.getchannel("A").getextrema()[0] < 250:
-            return img                                   # прозрачность уже есть, не трогаем
-        a = np.asarray(img.convert("RGB"), dtype=np.int16)
-        h, w = a.shape[:2]
-        corners = np.array([a[0, 0], a[0, w - 1], a[h - 1, 0], a[h - 1, w - 1]], dtype=np.int16)
-        bg = np.median(corners, axis=0)
-        same = (np.abs(a - bg).max(axis=2) <= tol)       # пиксели цвета фона
-        # заливка от краёв: фоном считаем только то, что связано с рамкой листа
-        reach = np.zeros_like(same)
-        reach[0, :], reach[-1, :], reach[:, 0], reach[:, -1] = same[0, :], same[-1, :], same[:, 0], same[:, -1]
-        prev = -1
-        while reach.sum() != prev:                       # растим область, пока она меняется
-            prev = reach.sum()
-            grown = reach.copy()
-            grown[1:, :] |= reach[:-1, :]
-            grown[:-1, :] |= reach[1:, :]
-            grown[:, 1:] |= reach[:, :-1]
-            grown[:, :-1] |= reach[:, 1:]
-            reach = grown & same
+            return img                                    # прозрачность уже есть, не трогаем
+        rgb = img.convert("RGB")
+        w, h = rgb.size
+        px = rgb.load()
+        corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+        bg = tuple(sorted(c[i] for c in corners)[len(corners) // 2] for i in range(3))
+
+        # маска "похоже на фон": берём максимальное расхождение по каналам
+        diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, bg)).split()
+        dmax = ImageChops.lighter(ImageChops.lighter(diff[0], diff[1]), diff[2])
+        mask = dmax.point(lambda v: 255 if v <= tol else 0)
+
+        # рамка в 1 пиксель + заливка из угла: фоном считаем только область, достающую до краёв
+        framed = Image.new("L", (w + 2, h + 2), 255)
+        framed.paste(mask, (1, 1))
+        ImageDraw.floodfill(framed, (0, 0), 128, thresh=0)
+        outside = framed.crop((1, 1, w + 1, h + 1)).point(lambda v: 0 if v == 128 else 255)
+
         out = img.copy()
-        alpha = np.asarray(out.getchannel("A")).copy()
-        alpha[reach] = 0
-        out.putalpha(Image.fromarray(alpha))
+        out.putalpha(ImageChops.darker(out.getchannel("A"), outside))
         return out
 
     @staticmethod
