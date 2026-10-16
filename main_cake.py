@@ -390,7 +390,31 @@ def _part(src: str):
     return types.Part.from_bytes(data=base64.b64decode(src.split(",", 1)[-1]), mime_type=mime)
 
 
-def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = "art") -> tuple:
+def crop_ratio(data_b64: str, ratio: str) -> str:
+    """Обрезает готовую картинку под выбранное соотношение сторон (1:1, 9:16 и т.д.)."""
+    try:
+        rw, rh = (float(v) for v in ratio.split(":"))
+        img = Image.open(io.BytesIO(base64.b64decode(data_b64))).convert("RGB")
+        want, have = rw / rh, img.width / img.height
+        if abs(want - have) < 0.02:
+            return data_b64
+        if have > want:                              # слишком широкая — режем по бокам
+            nw = round(img.height * want)
+            left = (img.width - nw) // 2
+            img = img.crop((left, 0, left + nw, img.height))
+        else:                                        # слишком высокая — режем сверху и снизу
+            nh = round(img.width / want)
+            top = (img.height - nh) // 2
+            img = img.crop((0, top, img.width, top + nh))
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        print(f"⚠️ Соотношение сторон не применено: {e}")
+        return data_b64
+
+
+def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = "art", ratio: str = "") -> tuple:
     sources = ([file_obj["data"]] if isinstance(file_obj, dict) and file_obj.get("data") else []) + list(refs or [])
     sources = sources[:6]
     if mode in ("fix", "cut"):
@@ -399,7 +423,8 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = 
     if mode == "cut" and contents:          # вырезать объект с фотографии
         text = CUT_PROMPT.format(what=prompt or "главный объект")
     elif mode == "bg" and len(contents) >= 2:   # замена фона: объект с первой картинки на фон со второй
-        text = BG_PROMPT.format(what=prompt or "главный объект", extra=("6. Пожелание: " + prompt) if prompt else "")
+        extra = f"6. Формат результата: {ratio} — скомпонуй кадр под него." if ratio else ""
+        text = BG_PROMPT.format(what=prompt or "главный объект", extra=extra)
     elif mode == "fix" and contents:        # доработка одной вырезанной детали
         text = FIX_PROMPT.format(extra=("6. Пожелание пользователя: " + prompt) if prompt else "")
     elif contents:
@@ -419,7 +444,11 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = 
         inline = getattr(part, "inline_data", None)
         if inline and inline.data:
             data = inline.data if isinstance(inline.data, bytes) else base64.b64decode(inline.data)
-            return base64.b64encode(data).decode(), inline.mime_type or "image/png"
+            out = base64.b64encode(data).decode()
+            if mode == "bg" and ratio:
+                out = crop_ratio(out, ratio)         # точное соотношение сторон гарантируем сами
+                return out, "image/png"
+            return out, inline.mime_type or "image/png"
     reason = getattr(cands[0], "finish_reason", None) if cands else None
     said = " ".join((getattr(p, "text", "") or "") for p in parts)[:150]
     print(f"❌ Gemini без изображения: finish_reason={reason} text={said!r}")
@@ -440,7 +469,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     try:
         while True:
             raw = await websocket.receive_text()
-            prompt, file_obj, style, refs, mode = raw.strip()[:500], None, "", [], "art"
+            prompt, file_obj, style, refs, mode, ratio = raw.strip()[:500], None, "", [], "art", ""
             try:
                 data = json.loads(raw)
                 if isinstance(data, dict):
@@ -451,6 +480,9 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     mode = want if want in ("fix", "cut", "bg") and refs else "art"
                     if mode == "bg" and len(refs) < 2:
                         mode = "art"
+                    ratio = str(data.get("ratio") or "")
+                    if ratio not in ("1:1", "9:16", "16:9", "4:3", "3:4", "4:5"):
+                        ratio = ""
             except json.JSONDecodeError:
                 pass
             if not prompt and not refs and not (isinstance(file_obj, dict) and file_obj.get("data")):
@@ -473,7 +505,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
                 print(f"🎨 {mode} для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}, списано {cost} кр.")
-                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs, mode)
+                image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs, mode, ratio)
             except Exception as e:
                 print(f"❌ Генерация: {e}")
                 await add_credits(client_email, cost, "refund:" + op)

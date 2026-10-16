@@ -222,6 +222,11 @@ class A4LayoutEngine:
         big = Image.new("L", (side * 4, side * 4), 0)            # сглаженный край круга
         ImageDraw.Draw(big).ellipse((0, 0, side * 4 - 1, side * 4 - 1), fill=255)
         disc.putalpha(big.resize((side, side), Image.Resampling.LANCZOS))
+        # тонкая серая линия реза по краю круга: видно, где резать, и что это именно круг
+        line = Image.new("RGBA", (side * 4, side * 4), (0, 0, 0, 0))
+        ImageDraw.Draw(line).ellipse((6, 6, side * 4 - 7, side * 4 - 7),
+                                     outline=(120, 120, 120, 255), width=max(4, round(side * 4 * 0.004)))
+        disc.alpha_composite(line.resize((side, side), Image.Resampling.LANCZOS))
         return disc
 
     def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0,
