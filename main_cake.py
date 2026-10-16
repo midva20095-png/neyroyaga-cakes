@@ -114,14 +114,8 @@ CUT_PROMPT = (
     "4. НИЧЕГО НЕ ОБРЕЗАЙ: объект виден полностью, вместе с мелкими частями, и не касается краёв кадра.\n"
     "5. Края вырезанного объекта ровные и чистые, без обрывков фона и белой каймы.\n"
     "6. Фон строго белый и ровный, без рамок и теней.\n"
-    "{text_rule}"
+    "7. Никаких надписей, букв и цифр: режим только вырезает объект."
 )
-NO_TEXT_RULE = "7. Никаких надписей, букв и цифр на картинке."
-TEXT_RULE = (
-    "7. Текст, который просил пользователь, напиши аккуратно и БЕЗ ОШИБОК, ровно один раз, "
-    "над объектом или под ним, на белом фоне, не перекрывая объект. Другого текста не добавляй."
-)
-TEXT_WORDS = ("текст", "надпис", "подпис", "напиши", "слов")
 BG_PROMPT = (
     "Даны два изображения. Первое — исходная картинка с объектом. Второе — новый фон.\n"
     "ЗАДАЧА: помести объект с первого изображения ({what}) на фон со второго изображения.\n"
@@ -428,11 +422,8 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = 
     if mode in ("fix", "cut"):
         sources = [_pad_white(src) for src in sources]
     contents = [_part(src) for src in sources]
-    if mode == "cut" and contents:          # вырезать объект с фотографии
-        low = (prompt or "").lower()
-        # если пользователь сам просит надпись, запрет на текст снимаем — иначе ИИ путался
-        rule = TEXT_RULE if any(w in low for w in TEXT_WORDS) else NO_TEXT_RULE
-        text = CUT_PROMPT.format(what=prompt or "главный объект", text_rule=rule)
+    if mode == "cut" and contents:          # вырезать объект с фотографии, без надписей
+        text = CUT_PROMPT.format(what=prompt or "главный объект")
     elif mode == "bg" and len(contents) >= 2:   # замена фона: объект с первой картинки на фон со второй
         extra = f"6. Формат результата: {ratio} — скомпонуй кадр под него." if ratio else ""
         text = BG_PROMPT.format(what=prompt or "главный объект", extra=extra)
