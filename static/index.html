@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>НейроЯга — макеты для сахарной печати</title>
+<style>
+:root{--lilac:#ebe7f5;--paper:#fdfcff;--ink:#2b2140;--mute:#645a7c;--line:#d9d1ea;--rasp:#d6336c;--pist:#17795a;--bad:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--lilac);color:var(--ink);font:15px/1.5 ui-rounded,"SF Pro Rounded","Segoe UI",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{font-weight:400}
+h1,h2{margin:0;font-weight:800;letter-spacing:-.02em}
+h1{font-size:26px}h2{font-size:19px}
+.hide{display:none!important}.grow{flex:1}
+:focus-visible{outline:3px solid var(--rasp);outline-offset:2px}
+button{cursor:pointer;border:0;border-radius:12px;padding:10px 16px;font-weight:700;background:var(--ink);color:#fff}
+button.main{background:var(--rasp)}
+button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper)}
+textarea{resize:vertical;margin-top:4px}
+label{display:block;font-size:13px;font-weight:600;color:var(--mute)}
+.paper{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:18px}
+.msg{min-height:1.4em;margin:8px 0 0;font-size:14px;color:var(--mute)}
+.msg.ok{color:var(--pist);font-weight:600}.msg.err{color:var(--bad);font-weight:600}
+.msg a{color:var(--rasp);font-weight:800}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.login form{width:min(380px,100%);display:grid;gap:12px}.login p{margin:0}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;background:var(--paper);border-bottom:1px solid var(--line)}
+.pill{padding:6px 14px;border-radius:99px;background:var(--lilac);font-weight:800}
+main{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:18px;max-width:1120px;margin:20px auto;padding:0 16px;align-items:start}
+main .paper>*+*{margin-top:12px}
+.chip{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:13px}
+.chip span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chip button{padding:4px 9px}
+.mat{padding:14px;min-height:220px;border-radius:14px;border:1px solid #b5d9cb;background-color:#d9efe6;
+background-image:linear-gradient(rgba(23,121,90,.16) 1px,transparent 1px),linear-gradient(90deg,rgba(23,121,90,.16) 1px,transparent 1px);background-size:20px 20px}
+.mat .paper{padding:14px;border-radius:12px}
+#items{display:grid;gap:10px}
+.it{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;padding:10px;background:var(--paper);border:1px solid var(--line);border-radius:12px}
+.it img{width:76px;height:76px;object-fit:contain;border-radius:8px;background:#fff;border:1px solid var(--line)}
+.f{display:grid;grid-template-columns:1.2fr 1fr .8fr;gap:8px}
+.f4{grid-template-columns:1fr 1fr .6fr 1fr 1fr}
+.x{padding:6px 10px}
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--paper);color:var(--ink);padding:20px;width:min(360px,92vw)}
+dialog::backdrop{background:rgba(43,33,64,.45)}
+.packs{display:grid;gap:8px;margin:12px 0}
+@media(max-width:800px){main{grid-template-columns:1fr}.f,.f4{grid-template-columns:1fr 1fr}.it{grid-template-columns:64px 1fr auto}.it img{width:64px;height:64px}}
+#refc{width:100%;border-radius:12px;border:1.5px solid var(--line);touch-action:none;cursor:crosshair}
+.regs{display:grid;gap:6px}.chip img{width:34px;height:34px;object-fit:cover;border-radius:6px}.chip span{flex:1}
+.it.sel{outline:3px solid var(--rasp)}.exact .f{display:none}.exact .it{cursor:pointer}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px}
+.gi{border:1.5px solid var(--line);border-radius:12px;padding:8px;background:var(--paper);cursor:pointer;text-align:center}
+.gi.sel{outline:3px solid var(--rasp)}
+.gi img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px;pointer-events:none}
+.gi b{display:block;font-size:12px;margin-top:6px;font-weight:600}
+#galwrap{max-width:1120px;margin:0 auto 24px;padding:0 16px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tabs button{flex:1;min-width:110px;padding:9px 8px;font-size:13px;background:var(--lilac);color:var(--ink);border:1.5px solid var(--line)}
+.tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.ratios{display:flex;gap:6px;flex-wrap:wrap}
+.ratios button{flex:1;min-width:62px;padding:8px 4px;font-size:13px;background:var(--lilac);color:var(--ink);border:1.5px solid var(--line)}
+.ratios button.on{background:var(--rasp);color:#fff;border-color:var(--rasp)}
+#board{display:block;margin:0 auto;background:#fff;border:1.5px solid var(--line);border-radius:8px;touch-action:none;max-width:100%}
+#boardwrap{padding:14px;border-radius:14px;background:#efeaf7;display:grid;place-items:center}
+.lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:6px;max-height:260px;overflow:auto;padding:4px;background:var(--lilac);border-radius:12px}
+.lib button{padding:4px;background:var(--paper);border:1.5px solid var(--line);border-radius:10px;height:74px}
+.lib img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+.sbrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.sbrow button{padding:8px 12px;font-size:13px}
+.thumb{width:100%;max-height:220px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:12px}
+</style>
+</head>
+<body>
+<section id="login" class="login">
+  <form id="loginf" class="paper">
+    <h1>НейроЯга</h1>
+    <p>Макеты для сахарной печати: загрузите образец, выделите нужные детали, опишите задачу и скачайте готовый PDF в точном размере.</p>
+    <label>Почта<input id="em" type="email" autocomplete="username" required></label>
+    <label>Пароль<input id="pw" type="password" autocomplete="current-password" required></label>
+    <button class="main">Войти</button>
+    <p id="lmsg" class="msg" aria-live="polite"></p>
+  </form>
+</section>
+
+<div id="app" class="hide">
+  <header>
+    <h1>НейроЯга</h1><span class="grow"></span>
+    <span id="credits" class="pill" title="Баланс: 1 кредит = 1 ₽">… кр.</span>
+    <button id="topup" class="main">Пополнить</button>
+    <button id="logout" class="ghost">Выйти</button>
+  </header>
+  <main>
+    <section class="paper">
+      <h2>Что сделать</h2>
+      <div class="tabs" id="tabs">
+        <button data-tab="cut" class="on">✂️ Вырезать объект</button>
+        <button data-tab="bg">🖼 Заменить фон</button>
+        <button data-tab="art">🎨 Нарисовать ИИ</button>
+        <button data-tab="hand">✋ Вручную</button>
+        <button data-tab="sand">🧩 Песочница</button>
+      </div>
+
+      <div id="t-cut">
+        <p class="msg">Загрузите фото, напишите, что вырезать, и ИИ уберёт фон. Результат попадёт в «Макет A4», там выберете форму и размер.</p>
+        <button id="refbtn" class="ghost">Загрузить фото или картинку</button>
+        <input id="refin" type="file" accept="image/*" hidden>
+        <label>Что вырезать<input id="what" maxlength="200" placeholder="торт со свечами"></label>
+        <button id="cut" class="main"></button>
+      </div>
+
+      <div id="t-bg" class="hide">
+        <p class="msg">Объект с вашей картинки переедет на новый фон. Нужны две картинки: с объектом и с фоном.</p>
+        <button id="refbtn2" class="ghost">1. Картинка с объектом</button>
+        <button id="bgbtn" class="ghost">2. Картинка нового фона</button>
+        <input id="bgin" type="file" accept="image/*" hidden>
+        <p id="bghint" class="msg"></p>
+        <img id="bgprev" class="thumb hide" alt="Новый фон">
+        <label>Что перенести<input id="what2" maxlength="200" placeholder="торт со свечами"></label>
+        <label>Формат картинки</label>
+        <div class="ratios" id="ratios">
+          <button data-r="1:1" class="on">1:1</button><button data-r="4:5">4:5</button><button data-r="9:16">9:16</button>
+          <button data-r="16:9">16:9</button><button data-r="4:3">4:3</button><button data-r="3:4">3:4</button>
+        </div>
+        <button id="bggo" class="main"></button>
+      </div>
+
+      <div id="t-art" class="hide">
+        <p class="msg">ИИ нарисует картинку по описанию. Образец можно не загружать.</p>
+        <button id="refbtn3" class="ghost">Образец (необязательно)</button>
+        <label>Что нарисовать
+          <textarea id="prompt" rows="3" maxlength="500" placeholder="Например: щенок в костюме космонавта. Только он, без лишних предметов."></textarea>
+        </label>
+        <label>Стиль
+          <select id="style"><option value="">Без стиля</option><option value="cartoon">Мультяшный</option><option value="watercolor">Акварель</option><option value="flat">Плоский, минимализм</option><option value="3d">3D-рендер</option><option value="realistic">Реалистичный</option><option value="line-art">Контурный лайн-арт</option></select>
+        </label>
+        <button id="gen" class="main"></button>
+      </div>
+
+      <div id="t-hand" class="hide">
+        <p class="msg">Бесплатно: сами обведите нужные детали на картинке и отправьте их в макет.</p>
+        <button id="refbtn4" class="ghost">Загрузить картинку</button>
+        <label id="toolwrap" class="hide">Как выделять
+          <select id="tool"><option value="box">Рамкой: обвести мышью</option><option value="auto">По объекту: клик по фигурке</option></select>
+        </label>
+        <div id="regs" class="regs"></div>
+        <button id="toitems" class="ghost hide">Отправить детали в макет</button>
+        <p id="fixhint" class="msg hide">Край рваный? Нажмите «✨ ИИ» у детали — она будет перерисована с ровными краями.</p>
+      </div>
+
+      <div id="t-sand" class="hide">
+        <p class="msg">Соберите макет сами: выберите формат, добавьте объекты и расставьте их мышью.</p>
+        <label>Формат макета
+          <select id="sfmt">
+            <option value="c160">Круг 16 см</option><option value="c200">Круг 20 см</option>
+            <option value="c60">Круг 6 см (капкейк)</option><option value="r210x297">Лист A4</option>
+            <option value="custom">Свой размер, мм</option>
+          </select>
+        </label>
+        <div id="scustom" class="f2 hide">
+          <label>Ширина, мм<input id="swmm" type="number" value="160" min="20" max="210"></label>
+          <label>Высота, мм<input id="shmm" type="number" value="160" min="20" max="297"></label>
+        </div>
+        <label>Фон макета<input id="sbg" type="color" value="#ffffff" style="height:42px;padding:4px"></label>
+        <div class="sbrow">
+          <button id="sown" class="ghost">Добавить свою картинку</button>
+          <input id="sownin" type="file" accept="image/*" multiple hidden>
+          <button id="sfromitems" class="ghost">Взять из макета A4</button>
+        </div>
+        <label>Библиотека объектов</label>
+        <input id="slibsearch" placeholder="Поиск: шар, цифра, торт…">
+        <div id="slib" class="lib"></div>
+      </div>
+
+      <canvas id="refc" class="hide"></canvas>
+      <p id="rhint" class="msg"></p>
+      <p id="st" class="msg" aria-live="polite"></p>
+      <img id="prev" class="thumb hide" alt="Результат">
+    </section>
+
+    <section id="sandpanel" class="paper hide">
+      <div class="bar"><h2 class="grow">Сборка макета</h2><span id="sinfo" class="msg"></span></div>
+      <div id="boardwrap"><canvas id="board"></canvas></div>
+      <div class="sbrow">
+        <button id="sup" class="ghost">Выше</button>
+        <button id="sdown" class="ghost">Ниже</button>
+        <button id="sflip" class="ghost">Отразить</button>
+        <button id="sdup" class="ghost">Копия</button>
+        <button id="sdel" class="ghost">Удалить</button>
+        <button id="sclear" class="ghost">Очистить</button>
+      </div>
+      <div class="sbrow">
+        <label class="grow">Размер выбранного, %<input id="ssize" type="range" min="5" max="200" value="40"></label>
+        <label class="grow">Поворот<input id="srot" type="range" min="-180" max="180" value="0"></label>
+      </div>
+      <div class="bar"><span id="shint" class="grow msg">Перетаскивайте объекты мышью или пальцем. Угол выделения тянет размер.</span>
+        <button id="sprint" class="main"></button></div>
+      <p id="sout" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section id="a4panel" class="paper">
+      <div class="bar"><h2 class="grow">Печать и раскладка</h2>
+        <button id="ownbtn" class="ghost">Добавить свои картинки</button>
+        <input id="own" type="file" accept="image/*" multiple hidden>
+      </div>
+      <label>Что скачать
+        <select id="mode"><option value="sheet">Набор наклеек на листах A4</option><option value="cupcakes">Сетка под капкейки: 12 круглых топперов по 6 см</option><option value="exact">Один макет точного размера по центру A4</option></select>
+      </label>
+      <div id="exactopts" class="hide">
+        <label>Формат
+          <select id="fmt"><option value="c200">Круг 20 см</option><option value="c160">Круг 16 см</option><option value="a4">Лист A4 целиком, 210×297 мм</option><option value="custom">Свой размер, мм</option></select>
+        </label>
+        <div id="custom" class="f2 hide"><label>Ширина, мм<input id="wmm" type="number" value="150" min="11" max="210"></label><label>Высота, мм<input id="hmm" type="number" value="150" min="11" max="297"></label></div>
+        <p class="msg">Выберите картинку в списке. На бумаге размер будет точным, если печатать в масштабе 100%.</p>
+      </div>
+      <div class="mat">
+        <p id="empty" class="paper">Здесь появятся картинки. Создайте макет ИИ, добавьте свои файлы или перенесите сюда выделенные детали — каждой задаётся свой размер.</p>
+        <div id="items"></div>
+      </div>
+      <div class="bar"><span id="sum" class="grow msg"></span><button id="build" class="main" disabled></button></div>
+      <p id="out" class="msg" aria-live="polite"></p>
+    </section>
+  </main>
+  <div id="galwrap">
+    <section class="paper">
+      <h2>Галерея готовых макетов</h2>
+      <p id="galmsg" class="msg">Загружаю…</p>
+      <div id="gal" class="gal"></div>
+      <div id="galbuy" class="hide">
+        <div class="f2">
+          <label>Формат
+            <select id="gfmt"><option value="c200">Круг 20 см</option><option value="c160">Круг 16 см</option><option value="c60">Круг 6 см (капкейки)</option><option value="custom">Свой размер, мм</option></select>
+          </label>
+          <label>Количество<input id="gcopies" type="number" value="1" min="1" max="100"></label>
+        </div>
+        <div id="gcustom" class="f2 hide"><label>Ширина, мм<input id="gw" type="number" value="150" min="11" max="210"></label><label>Высота, мм<input id="gh" type="number" value="150" min="11" max="297"></label></div>
+        <div class="bar" style="margin-top:12px"><span id="galpick" class="grow msg"></span><button id="gbuy" class="main"></button></div>
+        <p id="galout" class="msg" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <h2>Пополнить кредиты</h2>
+  <p class="msg">1 кредит = 1 ₽. Готовый макет стоит <b id="pp">50</b> ₽.</p>
+  <div id="packs" class="packs"></div>
+  <p id="pmsg" class="msg"></p>
+  <button class="ghost" onclick="$('dlg').close()">Закрыть</button>
+</dialog>
+
+<script>
+// Если страница лежит на другом домене, задайте до скрипта: window.API_BASE='https://ваш-сервер';
+const $=id=>document.getElementById(id);
+const ORIGIN=window.API_BASE||location.origin, WS_ORIGIN=ORIGIN.replace(/^http/,'ws');
+const JSONH={'Content-Type':'application/json'};
+let email='',ws=null,retry=0,busy=false,items=[],uid=0,sel=0,mode='sheet',PRICE={ai:50,pdf:50,fix:25,cut:50,bg:50};
+let rimg=null,regs=[],drag=null;
+
+const say=(el,t,cls='')=>{el.textContent=t;el.className='msg '+cls};
+const readFile=f=>new Promise(r=>{const x=new FileReader();x.onload=()=>r(x.result);x.readAsDataURL(f)});
+const shrink=(url,max=1024)=>new Promise(res=>{const i=new Image();i.onload=()=>{
+  const s=Math.min(1,max/Math.max(i.width,i.height)),c=document.createElement('canvas');
+  c.width=Math.round(i.width*s);c.height=Math.round(i.height*s);
+  c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.88))};i.src=url});
+const err=j=>{const d=j&&j.detail;return typeof d==='string'?d:(d&&d[0]&&d[0].msg)||'Ошибка сервера'};
+function labels(){
+  $('build').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('pp').textContent=PRICE.pdf;$('gbuy').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;
+  $('cut').textContent=busy?'Работаю…':`Вырезать объект за ${PRICE.cut} кр.`;
+  $('bggo').textContent=busy?'Работаю…':`Заменить фон за ${PRICE.bg} кр.`;
+  $('gen').textContent=busy?'Рисую…':`Нарисовать за ${PRICE.ai} кр.`;
+  $('sprint').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;
+}
+
+/* ---- вход ---- */
+$('loginf').onsubmit=async e=>{
+  e.preventDefault();say($('lmsg'),'Проверяю…');
+  const em=$('em').value.trim();
+  try{
+    const j=await fetch(ORIGIN+'/api/auth',{method:'POST',headers:JSONH,body:JSON.stringify({email:em,password:$('pw').value})}).then(r=>r.json());
+    if(!j.success)return say($('lmsg'),j.error||'Неверная почта или пароль.','err');
+    email=em;try{localStorage.setItem('ny_email',em)}catch{}
+    const c=await fetch(ORIGIN+'/api/config').then(r=>r.json()).catch(()=>null);if(c)PRICE=c.prices;
+    $('login').classList.add('hide');$('app').classList.remove('hide');labels();connect();loadGallery();
+  }catch{say($('lmsg'),'Сервер недоступен. Попробуйте ещё раз.','err')}
+};
+$('logout').onclick=()=>{email='';ws&&ws.close();location.reload()};
+try{$('em').value=localStorage.getItem('ny_email')||''}catch{}
+const setCredits=n=>{$('credits').textContent=n+' кр.'};
+
+/* ---- образец: выделение деталей ---- */
+const rc=$('refc'),rx=rc.getContext('2d');
+function drawRef(){
+  rx.drawImage(rimg,0,0,rc.width,rc.height);
+  regs.forEach((r,i)=>{if(!r.w||!r.h)return;rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.strokeRect(r.x,r.y,r.w,r.h);
+    rx.fillStyle='#d6336c';rx.fillRect(r.x,r.y,22,18);rx.fillStyle='#fff';rx.font='bold 13px sans-serif';rx.fillText(i+1,r.x+7,r.y+14)});
+}
+function listRegs(){
+  $('regs').innerHTML=regs.map((r,i)=>`<div class="chip"><img src="${r.url}" alt=""><span>Деталь ${i+1}</span><button class="ghost" data-add="${i}">в макет</button><button class="ghost" data-fix="${i}" title="ИИ перерисует деталь: ровные края, чистый фон">✨ ИИ</button><button class="ghost" data-i="${i}" aria-label="Убрать деталь">✕</button></div>`).join('');
+  $('toitems').classList.toggle('hide',!regs.length);
+  $('fixhint').classList.toggle('hide',!regs.length);
+  $('regs').querySelectorAll('[data-fix]').forEach(b=>b.textContent=`✨ ИИ за ${PRICE.fix} кр.`);
+  say($('rhint'),rimg?(regs.length?`Выделено деталей: ${regs.length}. ИИ получит только их.`:'Деталей не выделено: ИИ получит образец целиком. Или обведите нужные детали.'):'Загрузите пример и обведите на нём нужные детали: ИИ возьмёт только их.');
+}
+function cropReg(x,y,w,h){
+  const s=Math.min(1,768/Math.max(w,h)),c=document.createElement('canvas');
+  c.width=Math.round(w*s);c.height=Math.round(h*s);
+  c.getContext('2d').drawImage(rimg,x,y,w,h,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.9);
+}
+const pt=e=>{const b=rc.getBoundingClientRect();return[(e.clientX-b.left)*rc.width/b.width,(e.clientY-b.top)*rc.height/b.height]};
+/* Выделение по объекту считается прямо в браузере: подсветка сразу, без ожидания сервера.
+   Один раз после загрузки размечаем фигурки, потом при наведении мгновенно показываем рамку. */
+let marks=null,hover=null;
+function analyze(){
+  const S=Math.min(320,rc.width),k=S/rc.width,W=S,H=Math.max(1,Math.round(rc.height*k));
+  const c=document.createElement('canvas');c.width=W;c.height=H;
+  c.getContext('2d').drawImage(rimg,0,0,W,H);
+  const px=c.getContext('2d').getImageData(0,0,W,H).data,n=W*H;
+  const at=i=>[px[i*4],px[i*4+1],px[i*4+2]];
+  const corners=[0,W-1,(H-1)*W,H*W-1].map(at);
+  const bg=[0,1,2].map(j=>corners.map(c0=>c0[j]).sort((a,b)=>a-b)[2]);
+  const near=i=>{const p=at(i);return Math.max(Math.abs(p[0]-bg[0]),Math.abs(p[1]-bg[1]),Math.abs(p[2]-bg[2]))<=30};
+  const isBg=new Uint8Array(n),q=[];
+  for(let x=0;x<W;x++){for(const i of [x,(H-1)*W+x])if(near(i)&&!isBg[i]){isBg[i]=1;q.push(i)}}
+  for(let y=0;y<H;y++){for(const i of [y*W,y*W+W-1])if(near(i)&&!isBg[i]){isBg[i]=1;q.push(i)}}
+  while(q.length){const i=q.pop(),x=i%W,y=(i/W)|0;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=W||ny>=H)continue;
+      const j=ny*W+nx;if(!isBg[j]&&near(j)){isBg[j]=1;q.push(j)}}}
+  const lab=new Int32Array(n).fill(-1),boxes=[];
+  for(let i=0;i<n;i++){
+    if(isBg[i]||lab[i]>=0)continue;
+    const id=boxes.length;let b=[W,H,0,0];const st=[i];lab[i]=id;
+    while(st.length){const p=st.pop(),x=p%W,y=(p/W)|0;
+      if(x<b[0])b[0]=x;if(y<b[1])b[1]=y;if(x>b[2])b[2]=x;if(y>b[3])b[3]=y;
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=W||ny>=H)continue;
+        const j=ny*W+nx;if(!isBg[j]&&lab[j]<0){lab[j]=id;st.push(j)}}}
+    boxes.push(b);
+  }
+  marks={W,H,k,lab,boxes,isBg};
+}
+function boxAt(cx,cy){                                  // рамка объекта под курсором, в координатах холста
+  if(!marks)return null;
+  const x=Math.min(marks.W-1,Math.max(0,Math.round(cx*marks.k))),y=Math.min(marks.H-1,Math.max(0,Math.round(cy*marks.k)));
+  let id=marks.lab[y*marks.W+x];
+  if(id<0){                                             // попали в фон — ищем объект рядом
+    for(let r=2;r<40&&id<0;r+=2)for(const [dx,dy] of [[r,0],[-r,0],[0,r],[0,-r],[r,r],[-r,-r],[r,-r],[-r,r]]){
+      const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=marks.W||ny>=marks.H)continue;
+      const j=marks.lab[ny*marks.W+nx];if(j>=0){id=j;break}}
+  }
+  if(id<0)return null;
+  let [x0,y0,x1,y1]=marks.boxes[id];
+  for(let pass=0;pass<3;pass++){                        // прихватываем мелочи рядом: усы, брызги, искры
+    const pad=Math.max(3,Math.round(Math.max(x1-x0,y1-y0)*0.07));
+    const ex=[Math.max(0,x0-pad),Math.max(0,y0-pad),Math.min(marks.W-1,x1+pad),Math.min(marks.H-1,y1+pad)];
+    let g=[marks.W,marks.H,0,0],found=false;
+    for(let yy=ex[1];yy<=ex[3];yy++)for(let xx=ex[0];xx<=ex[2];xx++){
+      if(marks.isBg[yy*marks.W+xx])continue;found=true;
+      if(xx<g[0])g[0]=xx;if(yy<g[1])g[1]=yy;if(xx>g[2])g[2]=xx;if(yy>g[3])g[3]=yy;}
+    if(!found||(g[0]===x0&&g[1]===y0&&g[2]===x1&&g[3]===y1)){[x0,y0,x1,y1]=ex;break}
+    [x0,y0,x1,y1]=g;
+  }
+  const s=1/marks.k;
+  return {x:x0*s,y:y0*s,w:(x1-x0+1)*s,h:(y1-y0+1)*s};
+}
+rc.onpointerdown=e=>{if($('tool').value==='auto')return;drag=pt(e);rc.setPointerCapture(e.pointerId)};
+rc.onpointerleave=()=>{if(hover){hover=null;drawRef()}};
+rc.onclick=e=>{
+  if($('tool').value!=='auto'||!rimg)return;
+  const [x,y]=pt(e),b=boxAt(x,y);
+  if(!b)return say($('rhint'),'Здесь только фон — наведите курсор на саму фигурку.','err');
+  const k=rimg.width/rc.width;
+  regs.push({...b,url:cropReg(b.x*k,b.y*k,b.w*k,b.h*k)});
+  hover=null;drawRef();listRegs();
+  say($('rhint'),`Объект выделен целиком. Всего деталей: ${regs.length}.`,'ok');
+};
+$('what').oninput=()=>{$('what2').value=$('what').value};
+$('tool').onchange=e=>{rc.style.cursor=e.target.value==='auto'?'pointer':'crosshair';
+  say($('rhint'),e.target.value==='auto'?'Кликните по фигурке — она выделится целиком, со всеми мелкими деталями.':'Обведите нужную деталь мышью.');};
+rc.onpointermove=e=>{
+  if($('tool').value==='auto'){                        // подсветка: видно, что захватится до клика
+    const [x,y]=pt(e),b=boxAt(x,y);
+    if(JSON.stringify(b)===JSON.stringify(hover))return;
+    hover=b;drawRef();
+    if(b){rx.save();rx.fillStyle='rgba(214,51,108,.13)';rx.fillRect(b.x,b.y,b.w,b.h);
+      rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.setLineDash([7,5]);rx.strokeRect(b.x,b.y,b.w,b.h);rx.restore()}
+    return;
+  }
+  if(!drag)return;const p=pt(e);drawRef();rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.setLineDash([6,4]);rx.strokeRect(drag[0],drag[1],p[0]-drag[0],p[1]-drag[1]);rx.setLineDash([])};
+rc.onpointerup=e=>{
+  if(!drag)return;const p=pt(e),x=Math.min(drag[0],p[0]),y=Math.min(drag[1],p[1]),w=Math.abs(p[0]-drag[0]),h=Math.abs(p[1]-drag[1]);drag=null;
+  if(w>12&&h>12){const k=rimg.width/rc.width;regs.push({x,y,w,h,url:cropReg(x*k,y*k,w*k,h*k)})}
+  drawRef();listRegs();
+};
+$('regs').onclick=e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.add!==undefined){addItem(regs[+b.dataset.add].url);say($('st'),'Деталь добавлена в макет — задайте ей размер справа.','ok');return}
+  if(b.dataset.fix!==undefined){fixDetail(+b.dataset.fix);return}
+  regs.splice(+b.dataset.i,1);drawRef();listRegs();
+};
+$('toitems').onclick=()=>{regs.forEach(r=>addItem(r.url));say($('st'),`Добавлено деталей: ${regs.length}. У каждой свой размер и количество.`,'ok')};
+let tab='cut',ratio='1:1',bgSrc=null;
+$('tabs').onclick=e=>{
+  const b=e.target.closest('[data-tab]');if(!b)return;
+  tab=b.dataset.tab;
+  $('tabs').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  [['cut',$('t-cut')],['bg',$('t-bg')],['art',$('t-art')],['hand',$('t-hand')],['sand',$('t-sand')]].forEach(([t,el])=>el.classList.toggle('hide',t!==tab));
+  $('sandpanel').classList.toggle('hide',tab!=='sand');
+  $('a4panel').classList.toggle('hide',tab==='sand');
+  if(tab==='sand'&&!SB.lib.length)sbLoadLib();
+  $('refc').classList.toggle('hide',!(rimg&&tab==='hand'));           // холст нужен только для ручного выделения
+  say($('rhint'),'');say($('st'),'');
+};
+$('ratios').onclick=e=>{
+  const b=e.target.closest('[data-r]');if(!b)return;
+  ratio=b.dataset.r;$('ratios').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+};
+[$('refbtn'),$('refbtn2'),$('refbtn3'),$('refbtn4')].forEach(b=>b.onclick=()=>$('refin').click());
+$('refin').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;const url=await readFile(f);
+  const i=new Image();i.onload=()=>{rimg=i;regs=[];marks=null;hover=null;rc.width=Math.min(i.width,680);rc.height=Math.round(i.height*rc.width/i.width);if(tab==='hand')rc.classList.remove('hide');$('toolwrap').classList.remove('hide');drawRef();listRegs();try{analyze()}catch(x){marks=null}};
+  i.src=url;e.target.value='';
+};
+
+/* ---- генерация ИИ (WebSocket) ---- */
+function setBusy(b){busy=b;[$('gen'),$('cut'),$('bggo')].forEach(x=>x.disabled=b);labels()}
+function connect(){
+  ws=new WebSocket(`${WS_ORIGIN}/ws/${encodeURIComponent(email)}`);
+  ws.onopen=()=>{retry=0;say($('st'),'Соединение с сервером установлено.','ok')};
+  ws.onerror=()=>say($('st'),'Ошибка соединения с сервером.','err');
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.credits!=null)setCredits(m.credits);
+    if(m.type==='art'){
+      const src=`data:${m.mimeType||'image/png'};base64,${m.data}`;
+      try{addItem(src)}catch(x){say($('st'),'Не удалось показать результат: '+x.message,'err')}
+      $('prev').src=src;$('prev').classList.remove('hide');   // результат виден прямо под кнопкой
+      if(innerWidth<=800)$('items').scrollIntoView({behavior:'smooth',block:'center'});
+    }
+    if(m.text)say($('st'),m.text,m.type==='art'?'ok':'');
+    if(m.done!==false)setBusy(false);
+  };
+  ws.onclose=()=>{setBusy(false);if(!email)return;say($('st'),'Соединение потеряно, переподключаюсь…','err');setTimeout(connect,Math.min(1000*2**retry++,15000))};
+}
+function sendAI(mode,refs,price,title,prompt,ratio){
+  if(!ws||ws.readyState!==1)return say($('st'),'Нет соединения с сервером, подождите секунду…','err');
+  if(busy)return say($('st'),'Дождитесь, пока закончится предыдущая обработка.','err');
+  if(!confirm(`${title} Спишется ${price} кр. Продолжить?`))return;
+  setBusy(true);say($('st'),'Отправляю запрос…');
+  ws.send(JSON.stringify({mode,refs,prompt:prompt||'',style:$('style').value,ratio:ratio||''}));
+}
+$('cut').onclick=()=>{
+  if(!rimg)return say($('st'),'Сначала загрузите фото или картинку.','err');
+  sendAI('cut',[rimg.src],PRICE.cut,'ИИ вырежет объект и поставит его на белый фон.',$('what').value.trim());
+};
+$('bgbtn').onclick=()=>$('bgin').click();
+$('bgin').onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;
+  bgSrc=await shrink(await readFile(f));
+  $('bgprev').src=bgSrc;$('bgprev').classList.remove('hide');
+  say($('bghint'),'Новый фон загружен: '+f.name,'ok');
+};
+$('bggo').onclick=()=>{
+  if(!rimg)return say($('st'),'Загрузите картинку с объектом (шаг 1).','err');
+  if(!bgSrc)return say($('st'),'Загрузите картинку нового фона (шаг 2).','err');
+  sendAI('bg',[rimg.src,bgSrc],PRICE.bg,`ИИ перенесёт объект на новый фон, формат ${ratio}.`,$('what2').value.trim(),ratio);
+};
+function fixDetail(i){
+  const r=regs[i];if(!r)return;
+  if(!ws||ws.readyState!==1)return say($('st'),'Нет соединения с сервером, подождите секунду…','err');
+  if(busy)return say($('st'),'Дождитесь, пока закончится предыдущая обработка.','err');
+  if(!confirm(`ИИ перерисует деталь ${i+1}: ровные края и чистый фон. Спишется ${PRICE.fix} кр. Продолжить?`))return;
+  setBusy(true);say($('st'),`Дорабатываю деталь ${i+1}…`);
+  ws.send(JSON.stringify({prompt:$('prompt').value.trim(),refs:[r.url],mode:'fix'}));
+}
+$('gen').onclick=async()=>{
+  const prompt=$('prompt').value.trim();
+  if(!prompt&&!rimg)return say($('st'),'Опишите, что нарисовать, или загрузите образец.','err');
+  const refs=regs.length?regs.map(r=>r.url):(rimg?[await shrink(rimg.src)]:[]);
+  sendAI('art',refs,PRICE.ai,'ИИ нарисует картинку по описанию.',prompt);
+};
+
+/* ---- список картинок и режимы ---- */
+const TYPES=[['diameter','диаметру'],['height','высоте'],['width','ширине']];
+function sum(){const n=items.reduce((s,i)=>s+(+i.copies||0),0);$('sum').textContent=!items.length?'':mode==='exact'?'Выберите картинку для печати':mode==='cupcakes'?'12 круглых топперов 6 см, поровну из ваших картинок':`Картинок: ${items.length}, всего на печать: ${n}`}
+function addItem(src){const id=++uid;items.push({id,src,type:'diameter',size:10,copies:1,outline:1,circle:0});sel=id;render()}
+function render(){
+  $('items').className=(mode==='exact'||mode==='cupcakes')?'exact':'';
+  $('items').innerHTML=items.map(i=>`<div class="it${mode==='exact'&&i.id===sel?' sel':''}" data-id="${i.id}"><img src="${i.src}" alt="">
+    <div class="f f4">
+      <label>Размер по<select data-k="type">${TYPES.map(([v,t])=>`<option value="${v}"${i.type===v?' selected':''}>${t}</option>`).join('')}</select></label>
+      <label>Сантиметров<input data-k="size" type="number" min="1" max="26.9" step="0.5" value="${i.size}"></label>
+      <label>Копий<input data-k="copies" type="number" min="1" max="100" value="${i.copies}"></label>
+      <label title="Белый кант, по которому режут ножницами">Обводка<select data-k="outline"><option value="1"${+i.outline?' selected':''}>есть, 2.5 мм</option><option value="0"${+i.outline?'':' selected'}>нет</option></select></label>
+      <label title="Круглый топпер: картинка вписывается в круг">Форма<select data-k="circle"><option value="0"${+i.circle?'':' selected'}>по контуру</option><option value="1"${+i.circle?' selected':''}>круг</option></select></label>
+    </div><button class="ghost x" aria-label="Удалить картинку">✕</button></div>`).join('');
+  $('empty').classList.toggle('hide',items.length>0);$('build').disabled=!items.length;sum();
+}
+$('mode').onchange=e=>{mode=e.target.value;$('exactopts').classList.toggle('hide',mode!=='exact');render()};
+$('fmt').onchange=e=>$('custom').classList.toggle('hide',e.target.value!=='custom');
+$('items').addEventListener('input',e=>{
+  const row=e.target.closest('.it'),k=e.target.dataset.k;if(!row||!k)return;
+  items.find(i=>i.id==row.dataset.id)[k]=e.target.value;sum();
+});
+$('items').addEventListener('click',e=>{
+  const row=e.target.closest('.it');if(!row)return;
+  if(e.target.closest('.x')){items=items.filter(i=>i.id!=row.dataset.id);render();return}
+  if(mode==='exact'&&!e.target.closest('select,input')){sel=+row.dataset.id;render()}
+});
+$('ownbtn').onclick=()=>$('own').click();
+$('own').onchange=async e=>{for(const f of e.target.files)if(f.type.startsWith('image/'))addItem(await readFile(f));e.target.value=''};
+
+/* ---- скачать PDF (платно, списание на сервере) ---- */
+$('build').onclick=async()=>{
+  const out=$('out');let url,body;
+  if(mode==='exact'){
+    const it=items.find(i=>i.id===sel)||items[items.length-1],f=$('fmt').value;
+    const [w,h,circle]={c200:[200,200,true],c160:[160,160,true],a4:[210,297,false]}[f]||[+$('wmm').value,+$('hmm').value,false];
+    if(!(w>10&&w<=210&&h>10&&h<=297))return say(out,'Размер должен помещаться на A4: до 210×297 мм.','err');
+    url='/api/export-print';body={email,image_base64:it.src,width_mm:w,height_mm:h,circle};
+  }else{
+    const cup=mode==='cupcakes';                       // готовая сетка: 12 кругов по 6 см
+    const bad=cup?-1:items.findIndex(i=>!(+i.size>=1&&+i.size<=26.9&&+i.copies>=1&&+i.copies<=100));
+    if(bad>=0)return say(out,`Картинка №${bad+1}: размер от 1 до 26.9 см, копий от 1 до 100.`,'err');
+    url='/api/generate-pdf';body={email,items:items.map(i=>({image_base64:i.src,
+      type:cup?'diameter':i.type,size:cup?6:+i.size,copies:cup?Math.ceil(12/items.length):+i.copies,
+      outline:(cup||+i.circle)?0:(+i.outline?2.5:0),circle:cup||!!+i.circle}))};
+  }
+  if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
+  $('build').disabled=true;say(out,'Собираю PDF…');
+  try{
+    const r=await fetch(ORIGIN+url,{method:'POST',headers:JSONH,body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j)+(r.status===503?' Кредиты не списаны.':''))}
+    setCredits(j.credits);out.className='msg ok';
+    out.innerHTML=`Готово, листов A4: ${j.sheets_count}. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы». Для проверки на листе есть линейка 100 мм.`;
+  }catch(x){say(out,x.message,'err')}
+  $('build').disabled=!items.length;
+};
+
+/* ---- пополнение ---- */
+async function openTopup(){
+  const p=await fetch(ORIGIN+'/api/packs').then(r=>r.json()).catch(()=>[]);
+  $('packs').innerHTML=p.map(x=>`<button class="main" data-c="${x.credits}">${x.credits} кр. за ${x.amount} ₽</button>`).join('')||'Пакеты недоступны.';
+  say($('pmsg'),'');$('dlg').showModal();
+}
+$('topup').onclick=openTopup;
+$('packs').onclick=async e=>{
+  const c=e.target.dataset.c;if(!c)return;say($('pmsg'),'Создаю платёж…');
+  try{
+    const j=await fetch(ORIGIN+'/api/create-payment',{method:'POST',headers:JSONH,body:JSON.stringify({email,credits:+c})}).then(r=>r.json());
+    if(j.success&&j.confirmation_url)location.href=j.confirmation_url;else say($('pmsg'),j.error||'Не удалось создать платёж.','err');
+  }catch{say($('pmsg'),'Сервер недоступен.','err')}
+};
+/* ---- галерея готовых макетов ---- */
+let gsel=null;
+async function loadGallery(){
+  try{
+    const list=await fetch(ORIGIN+'/api/gallery').then(r=>r.json());
+    if(!list.length)return say($('galmsg'),'Готовые макеты скоро появятся.');
+    say($('galmsg'),`Выберите макет, задайте размер и скачайте PDF за ${PRICE.pdf} кр. На превью стоит водяной знак, в PDF его нет.`);
+    $('gal').innerHTML=list.map(g=>`<div class="gi" data-id="${g.id}"><img src="${ORIGIN+g.preview}" alt="${g.title}" loading="lazy"><b>${g.title}</b></div>`).join('');
+  }catch{say($('galmsg'),'Не удалось загрузить галерею.','err')}
+}
+$('gal').onclick=e=>{
+  const c=e.target.closest('.gi');if(!c)return;
+  gsel=c.dataset.id;
+  $('gal').querySelectorAll('.gi').forEach(x=>x.classList.toggle('sel',x===c));
+  $('galbuy').classList.remove('hide');
+  $('galpick').textContent='Выбрано: '+c.querySelector('b').textContent;
+};
+$('gfmt').onchange=e=>$('gcustom').classList.toggle('hide',e.target.value!=='custom');
+$('gbuy').onclick=async()=>{
+  const out=$('galout');if(!gsel)return say(out,'Сначала выберите макет.','err');
+  const f=$('gfmt').value;
+  const [w,h,circle]={c200:[200,200,true],c160:[160,160,true],c60:[60,60,true]}[f]||[+$('gw').value,+$('gh').value,false];
+  if(!(w>10&&w<=210&&h>10&&h<=297))return say(out,'Размер должен помещаться на A4: до 210×297 мм.','err');
+  if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
+  $('gbuy').disabled=true;say(out,'Готовлю PDF…');
+  try{
+    const r=await fetch(ORIGIN+'/api/gallery-buy',{method:'POST',headers:JSONH,body:JSON.stringify({email,item_id:gsel,width_mm:w,height_mm:h,circle,copies:+$('gcopies').value||1})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
+    setCredits(j.credits);out.className='msg ok';
+    out.innerHTML=`Готово. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+  }catch(x){say(out,x.message,'err')}
+  $('gbuy').disabled=false;
+};
+
+/* ================= Песочница: сборка макета из объектов ================= */
+const SB={w:160,h:160,round:true,bg:'#ffffff',objs:[],sel:null,lib:[]};
+window.__nyBoard=SB;                            // для диагностики: состояние песочницы
+const bd=$('board'),bx=bd.getContext('2d');
+const PXMM=4;                                   // пикселей холста на миллиметр (экранный масштаб)
+function sbFormat(){
+  const f=$('sfmt').value;
+  if(f==='custom'){SB.w=+$('swmm').value||160;SB.h=+$('shmm').value||160;SB.round=false}
+  else if(f==='r210x297'){SB.w=210;SB.h=297;SB.round=false}
+  else {const d={c160:160,c200:200,c60:60}[f];SB.w=SB.h=d;SB.round=true}
+  bd.width=Math.round(SB.w*PXMM);bd.height=Math.round(SB.h*PXMM);
+  bd.style.width=Math.min(520,bd.width)+'px';
+  $('sinfo').textContent=`${SB.w}×${SB.h} мм`+(SB.round?', круг':'');
+  sbDraw();
+}
+function sbDraw(){
+  bx.clearRect(0,0,bd.width,bd.height);
+  bx.save();
+  if(SB.round){bx.beginPath();bx.ellipse(bd.width/2,bd.height/2,bd.width/2,bd.height/2,0,0,7);bx.clip()}
+  bx.fillStyle=SB.bg;bx.fillRect(0,0,bd.width,bd.height);
+  for(const o of SB.objs){
+    if(!o.img.complete||!o.img.naturalWidth)continue;
+    bx.save();bx.translate(o.x,o.y);bx.rotate(o.rot*Math.PI/180);bx.scale(o.flip?-1:1,1);
+    bx.drawImage(o.img,-o.w/2,-o.h/2,o.w,o.h);bx.restore();
+  }
+  bx.restore();
+  if(SB.round){bx.strokeStyle='#b0a8c8';bx.lineWidth=2;bx.setLineDash([8,6]);
+    bx.beginPath();bx.ellipse(bd.width/2,bd.height/2,bd.width/2-1,bd.height/2-1,0,0,7);bx.stroke();bx.setLineDash([])}
+  const o=SB.sel;
+  if(o){bx.save();bx.translate(o.x,o.y);bx.rotate(o.rot*Math.PI/180);
+    bx.strokeStyle='#d6336c';bx.lineWidth=2;bx.setLineDash([6,4]);bx.strokeRect(-o.w/2,-o.h/2,o.w,o.h);bx.setLineDash([]);
+    bx.fillStyle='#d6336c';bx.fillRect(o.w/2-9,o.h/2-9,18,18);bx.restore()}
+}
+function sbAdd(src,title){
+  const img=new Image();
+  img.onload=()=>{
+    const k=Math.min(bd.width*0.4/img.width,bd.height*0.4/img.height);
+    const o={img,title:title||'',x:bd.width/2,y:bd.height/2,w:img.width*k,h:img.height*k,rot:0,flip:false};
+    SB.objs.push(o);SB.sel=o;sbSyncSliders();sbDraw();
+  };
+  img.onerror=()=>say($('sout'),'Не удалось открыть картинку','err');
+  img.src=src;
+}
+async function toData(url){                      // через fetch, иначе холст «портится» чужим доменом
+  const r=await fetch(url);const b=await r.blob();
+  return new Promise(res=>{const f=new FileReader();f.onload=()=>res(f.result);f.readAsDataURL(b)});
+}
+async function sbLoadLib(){
+  try{
+    SB.lib=await fetch(ORIGIN+'/api/objects').then(r=>r.json());
+    sbRenderLib('');
+  }catch{say($('sout'),'Библиотека объектов недоступна','err')}
+}
+function sbRenderLib(q){
+  const list=SB.lib.filter(o=>!q||o.title.toLowerCase().includes(q));
+  $('slib').innerHTML=list.map(o=>`<button data-u="${o.url}" title="${o.title}"><img src="${ORIGIN+o.url}" alt="${o.title}" loading="lazy"></button>`).join('')
+    ||'<p class="msg">Ничего не найдено</p>';
+}
+$('slibsearch').oninput=e=>sbRenderLib(e.target.value.trim().toLowerCase());
+$('slib').onclick=async e=>{
+  const b=e.target.closest('[data-u]');if(!b)return;
+  sbAdd(await toData(ORIGIN+b.dataset.u));
+};
+$('sfmt').onchange=()=>{$('scustom').classList.toggle('hide',$('sfmt').value!=='custom');sbFormat()};
+$('swmm').oninput=$('shmm').oninput=sbFormat;
+$('sbg').oninput=e=>{SB.bg=e.target.value;sbDraw()};
+$('sown').onclick=()=>$('sownin').click();
+$('sownin').onchange=async e=>{for(const f of e.target.files)if(f.type.startsWith('image/'))sbAdd(await readFile(f),f.name);e.target.value=''};
+$('sfromitems').onclick=()=>{
+  if(!items.length)return say($('sout'),'В «Печать и раскладка» пока нет картинок.','err');
+  items.forEach(i=>sbAdd(i.src));say($('sout'),`Добавлено картинок: ${items.length}`,'ok');
+};
+/* перетаскивание, размер, поворот */
+const bpt=e=>{const r=bd.getBoundingClientRect();return[(e.clientX-r.left)*bd.width/r.width,(e.clientY-r.top)*bd.height/r.height]};
+function hit(x,y){
+  for(let i=SB.objs.length-1;i>=0;i--){const o=SB.objs[i];
+    const a=-o.rot*Math.PI/180,dx=x-o.x,dy=y-o.y;
+    const lx=dx*Math.cos(a)-dy*Math.sin(a),ly=dx*Math.sin(a)+dy*Math.cos(a);
+    if(Math.abs(lx)<=o.w/2+10&&Math.abs(ly)<=o.h/2+10)return{o,lx,ly};
+  }
+  return null;
+}
+let sdrag=null;
+bd.onpointerdown=e=>{
+  const [x,y]=bpt(e),h=hit(x,y);
+  if(!h){SB.sel=null;sbDraw();return}
+  SB.sel=h.o;sbSyncSliders();
+  const corner=h.lx>h.o.w/2-20&&h.ly>h.o.h/2-20;
+  sdrag={mode:corner?'size':'move',x,y,w:h.o.w,h:h.o.h};
+  bd.setPointerCapture(e.pointerId);sbDraw();
+};
+bd.onpointermove=e=>{
+  if(!sdrag||!SB.sel)return;
+  const [x,y]=bpt(e),o=SB.sel;
+  if(sdrag.mode==='move'){o.x+=x-sdrag.x;o.y+=y-sdrag.y;sdrag.x=x;sdrag.y=y}
+  else{const k=Math.max(0.1,1+((x-sdrag.x)+(y-sdrag.y))/Math.max(40,sdrag.w));
+    o.w=Math.max(10,sdrag.w*k);o.h=Math.max(10,sdrag.h*k);sbSyncSliders()}
+  sbDraw();
+};
+bd.onpointerup=()=>{sdrag=null};
+function sbSyncSliders(){
+  const o=SB.sel;if(!o)return;
+  $('ssize').value=Math.round(Math.min(200,o.w/bd.width*100));
+  $('srot').value=Math.round(o.rot);
+}
+$('ssize').oninput=e=>{const o=SB.sel;if(!o)return;
+  const k=(+e.target.value/100*bd.width)/o.w;o.w*=k;o.h*=k;sbDraw()};
+$('srot').oninput=e=>{if(!SB.sel)return;SB.sel.rot=+e.target.value;sbDraw()};
+$('sup').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>=0&&i<SB.objs.length-1){SB.objs.splice(i,1);SB.objs.splice(i+1,0,SB.sel);sbDraw()}};
+$('sdown').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>0){SB.objs.splice(i,1);SB.objs.splice(i-1,0,SB.sel);sbDraw()}};
+$('sflip').onclick=()=>{if(SB.sel){SB.sel.flip=!SB.sel.flip;sbDraw()}};
+$('sdup').onclick=()=>{const o=SB.sel;if(!o)return;const c={...o,x:o.x+20,y:o.y+20};SB.objs.push(c);SB.sel=c;sbDraw()};
+$('sdel').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>=0){SB.objs.splice(i,1);SB.sel=null;sbDraw()}};
+$('sclear').onclick=()=>{if(SB.objs.length&&confirm('Убрать все объекты с макета?')){SB.objs=[];SB.sel=null;sbDraw()}};
+/* печать: пересобираем макет в 300 DPI и отправляем на сервер */
+function sbRender300(){
+  const px=Math.round(SB.w*11.811),py=Math.round(SB.h*11.811),k=px/bd.width;
+  const c=document.createElement('canvas');c.width=px;c.height=py;
+  const g=c.getContext('2d');g.fillStyle=SB.bg;g.fillRect(0,0,px,py);
+  for(const o of SB.objs){
+    if(!o.img.complete||!o.img.naturalWidth)continue;
+    g.save();g.translate(o.x*k,o.y*k);g.rotate(o.rot*Math.PI/180);g.scale(o.flip?-1:1,1);
+    g.drawImage(o.img,-o.w*k/2,-o.h*k/2,o.w*k,o.h*k);g.restore();
+  }
+  return c.toDataURL('image/png');
+}
+$('sprint').onclick=async()=>{
+  const out=$('sout');
+  if(!SB.objs.length)return say(out,'Добавьте хотя бы один объект.','err');
+  if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
+  $('sprint').disabled=true;say(out,'Собираю PDF…');
+  try{
+    const r=await fetch(ORIGIN+'/api/export-print',{method:'POST',headers:JSONH,
+      body:JSON.stringify({email,image_base64:sbRender300(),width_mm:SB.w,height_mm:SB.h,circle:SB.round})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
+    setCredits(j.credits);out.className='msg ok';
+    out.innerHTML=`Готово. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+  }catch(x){say(out,x.message,'err')}
+  $('sprint').disabled=false;
+};
+
+sbFormat();
+labels();
+</script>
+</body>
+</html>

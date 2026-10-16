@@ -33,6 +33,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 GALLERY_DIR = BASE_DIR / "gallery"
 GALLERY_DIR.mkdir(exist_ok=True)
 GALLERY_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+# Библиотека объектов для песочницы: картинки в папке objects. Имя файла = название объекта.
+OBJECTS_DIR = BASE_DIR / "objects"
+OBJECTS_DIR.mkdir(exist_ok=True)
+OBJECT_EXT = {".svg", ".png", ".webp"}
 
 app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -262,6 +266,18 @@ async def generate_pdf_endpoint(payload: LayoutRequest):
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
 
+def titles_of(folder: Path) -> dict:
+    """Названия берём из titles.json, если он есть: имена файлов латиницей, чтобы архив
+    одинаково распаковывался на macOS и Windows, а названия в интерфейсе оставались русскими."""
+    f = folder / "titles.json"
+    if f.is_file():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"⚠️ {f}: {e}")
+    return {}
+
+
 def gallery_items():
     return sorted((f for f in GALLERY_DIR.iterdir() if f.suffix.lower() in GALLERY_EXT), key=lambda f: f.name.lower())
 
@@ -273,10 +289,32 @@ def gallery_file(item_id: str) -> Path:
     raise HTTPException(status_code=404, detail="Макет не найден")
 
 
+@app.get("/api/objects")
+def objects_list():
+    """Объекты для песочницы: имена файлов латиницей, русские названия — из objects/titles.json."""
+    names = titles_of(OBJECTS_DIR)
+    files = sorted((f for f in OBJECTS_DIR.iterdir() if f.suffix.lower() in OBJECT_EXT), key=lambda f: f.name.lower())
+    out = []
+    for f in files:
+        title = names.get(f.name, f.stem.replace("-", " "))
+        out.append({"id": f.name, "title": title, "group": title.split()[0], "url": f"/api/object/{f.name}"})
+    return sorted(out, key=lambda x: x["title"].lower())
+
+
+@app.get("/api/object/{name}")
+def object_file(name: str):
+    path = OBJECTS_DIR / name
+    if path.suffix.lower() not in OBJECT_EXT or not path.is_file() or path.parent != OBJECTS_DIR:
+        raise HTTPException(status_code=404, detail="Объект не найден")
+    mime = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp"}[path.suffix.lower()]
+    return FileResponse(path, media_type=mime)
+
+
 @app.get("/api/gallery")
 def gallery_list():
-    return [{"id": f.stem, "title": f.stem.replace("_", " "), "preview": f"/api/gallery-preview/{f.stem}"}
-            for f in gallery_items()]
+    names = titles_of(GALLERY_DIR)
+    return [{"id": f.stem, "title": names.get(f.name, f.stem.replace("_", " ").replace("-", " ")),
+             "preview": f"/api/gallery-preview/{f.stem}"} for f in gallery_items()]
 
 
 @app.get("/api/gallery-preview/{item_id}")
