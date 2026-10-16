@@ -66,7 +66,7 @@ RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
 SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
 # 1 кредит = 1 ₽. Каждый готовый результат платный; цены правятся ТОЛЬКО здесь.
-PRICES = {"ai": 50, "pdf": 50, "fix": 25, "cut": 50, "bg": 50}  # ai — генерация, pdf — готовый PDF, fix — доработка детали, cut — вырезать объект, bg — замена фона
+PRICES = {"pdf": 10, "ai": 50, "cut": 50, "bg": 50, "enhance": 50, "fix": 25}  # pdf — готовый PDF без ИИ (песочница и раскладка); остальное — работа ИИ
 CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
@@ -107,6 +107,18 @@ FIX_PROMPT = (
     "4. Объект по центру, вокруг него свободное белое поле со всех четырёх сторон "
     "шириной примерно в одну десятую кадра.\n"
     "5. Ровные чистые края, никаких надписей, букв, цифр, рамок и теней на фоне.\n"
+    "{extra}"
+)
+ENHANCE_PROMPT = (
+    "На изображении — макет для съедобной печати, который пользователь собрал сам из картинок и надписей.\n"
+    "ЗАДАЧА: аккуратно улучшить этот макет, не меняя его сути.\n"
+    "ПРАВИЛА:\n"
+    "1. Сохрани композицию: те же объекты, на тех же местах, тех же размеров.\n"
+    "2. Сохрани ВСЕ надписи слово в слово, без ошибок и без новых слов. Их можно сделать "
+    "только аккуратнее и читабельнее.\n"
+    "3. Улучшай только качество: ровные края, чистые цвета, мягкие тени, общий стиль.\n"
+    "4. Ничего не добавляй от себя и ничего не убирай.\n"
+    "5. Формат кадра и пропорции оставь прежними, ничего не обрезай.\n"
     "{extra}"
 )
 CUT_PROMPT = (
@@ -463,7 +475,9 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = 
     if mode in ("fix", "cut"):
         sources = [_pad_white(src) for src in sources]
     contents = [_part(src) for src in sources]
-    if mode == "cut" and contents:          # вырезать объект с фотографии, без надписей
+    if mode == "enhance" and contents:      # улучшить собранный макет
+        text = ENHANCE_PROMPT.format(extra=("6. Пожелание пользователя: " + prompt) if prompt else "")
+    elif mode == "cut" and contents:        # вырезать объект с фотографии, без надписей
         text = CUT_PROMPT.format(what=prompt or "главный объект")
     elif mode == "bg" and len(contents) >= 2:   # замена фона: объект с первой картинки на фон со второй
         extra = f"6. Формат результата: {ratio} — скомпонуй кадр под него." if ratio else ""
@@ -520,7 +534,7 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     style = str(data.get("style") or "")
                     refs = [r for r in (data.get("refs") or []) if isinstance(r, str)][:6]
                     want = str(data.get("mode") or "art")
-                    mode = want if want in ("fix", "cut", "bg") and refs else "art"
+                    mode = want if want in ("fix", "cut", "bg", "enhance") and refs else "art"
                     if mode == "bg" and len(refs) < 2:
                         mode = "art"
                     ratio = str(data.get("ratio") or "")
@@ -542,8 +556,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             if not res["success"]:
                 await send(f"💎 Недостаточно кредитов: нужно {cost} кр., на балансе {balance} кр.", balance)
                 continue
-            steps = {"fix": "🪄 Дорабатываю деталь...", "cut": "✂️ Вырезаю объект...",
-                     "bg": "🖼 Меняю фон...", "art": "🪄 Генерация композиции для макета..."}
+            steps = {"fix": "🪄 Дорабатываю деталь...", "cut": "✂️ Вырезаю объект...", "bg": "🖼 Меняю фон...",
+                     "enhance": "✨ Улучшаю макет...", "art": "🪄 Генерация композиции для макета..."}
             await send(steps[mode], balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
@@ -555,7 +569,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 balance += cost
                 await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
                 continue
-            done_text = {"fix": "✨ Деталь готова! Она добавлена в список «Макет A4».",
+            done_text = {"enhance": "✨ Макет улучшен! Проверьте результат в песочнице.",
+                         "fix": "✨ Деталь готова! Она добавлена в список «Макет A4».",
                          "cut": "✂️ Объект вырезан! Картинка в списке «Макет A4» — задайте форму и размер.",
                          "bg": "🖼 Фон заменён! Картинка в списке «Макет A4».",
                          "art": "✨ Макет готов! Он добавлен в список «Макет A4»."}
