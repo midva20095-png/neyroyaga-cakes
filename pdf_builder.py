@@ -117,6 +117,19 @@ def pack_rects(rects, bin_w, bin_h):
     return placed
 
 
+def _uniform_border(rgb, tol=10, need=0.97):
+    """Проверяет, что рамка картинки почти одного цвета (ровный фон)."""
+    w, h = rgb.size
+    px = rgb.load()
+    step = max(1, min(w, h) // 60)
+    pts = [(x, 0) for x in range(0, w, step)] + [(x, h - 1) for x in range(0, w, step)]
+    pts += [(0, y) for y in range(0, h, step)] + [(w - 1, y) for y in range(0, h, step)]
+    cols = [px[x, y] for x, y in pts]
+    bg = tuple(sorted(c[i] for c in cols)[len(cols) // 2] for i in range(3))
+    same = sum(1 for c in cols if max(abs(c[i] - bg[i]) for i in range(3)) <= tol)
+    return same / len(cols) >= need
+
+
 class A4LayoutEngine:
     def __init__(self):
         self.gap_px = round(GAP_MM * MM_PX)
@@ -145,6 +158,10 @@ class A4LayoutEngine:
         if img.getchannel("A").getextrema()[0] < 250:
             return img                                    # прозрачность уже есть, не трогаем
         rgb = img.convert("RGB")
+        # Фон убираем только у картинок с ровным фоном (рисунки, клипарт).
+        # У фотографии фон неровный: раньше на ней выедались белые дыры — теперь она не трогается.
+        if not _uniform_border(rgb):
+            return img
         w, h = rgb.size
         px = rgb.load()
         corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
