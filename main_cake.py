@@ -62,7 +62,7 @@ RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
 SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
 # 1 кредит = 1 ₽. Каждый готовый результат платный; цены правятся ТОЛЬКО здесь.
-PRICES = {"ai": 50, "pdf": 50, "fix": 25}  # ai — генерация макета, pdf — готовый PDF, fix — доработка одной вырезанной детали
+PRICES = {"ai": 50, "pdf": 50, "fix": 25, "cut": 50, "bg": 50}  # ai — генерация, pdf — готовый PDF, fix — доработка детали, cut — вырезать объект, bg — замена фона
 CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
@@ -103,6 +103,26 @@ FIX_PROMPT = (
     "4. Объект по центру, вокруг него свободное белое поле со всех четырёх сторон "
     "шириной примерно в одну десятую кадра.\n"
     "5. Ровные чистые края, никаких надписей, букв, цифр, рамок и теней на фоне.\n"
+    "{extra}"
+)
+CUT_PROMPT = (
+    "На изображении — фотография или рисунок. ЗАДАЧА: вырежи {what} и помести его на чисто белый фон.\n"
+    "ПРАВИЛА:\n"
+    "1. Объект должен остаться точно таким же: та же поза, те же цвета, те же детали. Ничего не перерисовывай заново.\n"
+    "2. Убери весь фон целиком: стены, пол, предметы вокруг, тени на полу.\n"
+    "3. НИЧЕГО НЕ ОБРЕЗАЙ: объект виден полностью, вместе с мелкими частями, и не касается краёв кадра.\n"
+    "4. Края вырезанного объекта ровные и чистые, без обрывков фона и белой каймы.\n"
+    "5. Фон строго белый и ровный. Никаких надписей, рамок и теней на фоне."
+)
+BG_PROMPT = (
+    "Даны два изображения. Первое — исходная картинка с объектом. Второе — новый фон.\n"
+    "ЗАДАЧА: помести объект с первого изображения ({what}) на фон со второго изображения.\n"
+    "ПРАВИЛА:\n"
+    "1. Объект переносится без изменений: та же форма, поза, цвета и все детали.\n"
+    "2. Старый фон удаляется полностью.\n"
+    "3. Объект вписывается в новый фон естественно: правильный масштаб, положение и направление света.\n"
+    "4. Объект виден целиком и не обрезается краями кадра.\n"
+    "5. Никаких надписей, букв и цифр.\n"
     "{extra}"
 )
 REF_PROMPT = (
@@ -373,10 +393,14 @@ def _part(src: str):
 def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = "art") -> tuple:
     sources = ([file_obj["data"]] if isinstance(file_obj, dict) and file_obj.get("data") else []) + list(refs or [])
     sources = sources[:6]
-    if mode == "fix":
+    if mode in ("fix", "cut"):
         sources = [_pad_white(src) for src in sources]
     contents = [_part(src) for src in sources]
-    if mode == "fix" and contents:          # доработка одной вырезанной детали
+    if mode == "cut" and contents:          # вырезать объект с фотографии
+        text = CUT_PROMPT.format(what=prompt or "главный объект")
+    elif mode == "bg" and len(contents) >= 2:   # замена фона: объект с первой картинки на фон со второй
+        text = BG_PROMPT.format(what=prompt or "главный объект", extra=("6. Пожелание: " + prompt) if prompt else "")
+    elif mode == "fix" and contents:        # доработка одной вырезанной детали
         text = FIX_PROMPT.format(extra=("6. Пожелание пользователя: " + prompt) if prompt else "")
     elif contents:
         text = REF_PROMPT.format(n=len(contents), prompt=prompt or "по образцам")
@@ -423,14 +447,17 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                     prompt, file_obj = str(data.get("prompt") or "").strip()[:500], data.get("file")
                     style = str(data.get("style") or "")
                     refs = [r for r in (data.get("refs") or []) if isinstance(r, str)][:6]
-                    mode = "fix" if data.get("mode") == "fix" and refs else "art"
+                    want = str(data.get("mode") or "art")
+                    mode = want if want in ("fix", "cut", "bg") and refs else "art"
+                    if mode == "bg" and len(refs) < 2:
+                        mode = "art"
             except json.JSONDecodeError:
                 pass
             if not prompt and not refs and not (isinstance(file_obj, dict) and file_obj.get("data")):
                 await send("✍️ Опишите, что нарисовать, или приложите референс.", balance)
                 continue  # пустой запрос больше не списывает кредиты
 
-            cost = PRICES["fix"] if mode == "fix" else PRICES["ai"]
+            cost = PRICES.get(mode, PRICES["ai"])
             op = uuid.uuid4().hex
             res = await deduct(client_email, cost, op)
             if res.get("unavailable"):
@@ -440,7 +467,9 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             if not res["success"]:
                 await send(f"💎 Недостаточно кредитов: нужно {cost} кр., на балансе {balance} кр.", balance)
                 continue
-            await send("🪄 Дорабатываю деталь..." if mode == "fix" else "🪄 Генерация композиции для макета...", balance, done=False)
+            steps = {"fix": "🪄 Дорабатываю деталь...", "cut": "✂️ Вырезаю объект...",
+                     "bg": "🖼 Меняю фон...", "art": "🪄 Генерация композиции для макета..."}
+            await send(steps[mode], balance, done=False)
 
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
                 print(f"🎨 {mode} для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}, списано {cost} кр.")
@@ -451,8 +480,11 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
                 balance += cost
                 await send(f"⚠️ Не удалось создать арт, кредиты возвращены. {str(e)[:160]}", balance)
                 continue
-            await send("✨ Деталь готова! Она добавлена в список «Макет A4»." if mode == "fix"
-                       else "✨ Макет готов! Он добавлен в список «Макет A4».", balance, "art", data=image_b64, mimeType=mime)
+            done_text = {"fix": "✨ Деталь готова! Она добавлена в список «Макет A4».",
+                         "cut": "✂️ Объект вырезан! Картинка в списке «Макет A4» — задайте форму и размер.",
+                         "bg": "🖼 Фон заменён! Картинка в списке «Макет A4».",
+                         "art": "✨ Макет готов! Он добавлен в список «Макет A4»."}
+            await send(done_text[mode], balance, "art", data=image_b64, mimeType=mime)
             print(f"✅ Арт отправлен клиенту: {len(image_b64) // 1024} КБ")
     except WebSocketDisconnect:
         print(f"Кондитер {client_email} отключился.")

@@ -202,13 +202,23 @@ class A4LayoutEngine:
         return halo.crop(halo.getchannel("A").getbbox())
 
     @staticmethod
-    def to_circle(img, diameter_px: int):
-        """Вписывает картинку в КРУГ заданного диаметра — так режут топперы для капкейков."""
+    def to_circle(img, diameter_px: int, fill: bool = None):
+        """Круглый топпер заданного диаметра.
+        fill=True  — фото заполняет круг целиком (обрезается по центру), без белых углов;
+        fill=False — фигурка вписывается внутрь круга на белом поле (запас под ножницы)."""
         side = max(1, diameter_px)
-        k = min(side / img.width, side / img.height) * 0.88      # белое поле внутри круга = запас под ножницы
-        fitted = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.Resampling.LANCZOS)
+        if fill is None:                                          # фото заполняем, вырезанную фигурку вписываем
+            fill = img.getchannel("A").getextrema()[0] >= 250
         disc = Image.new("RGBA", (side, side), (255, 255, 255, 255))
-        disc.alpha_composite(fitted, ((side - fitted.width) // 2, (side - fitted.height) // 2))
+        if fill:
+            k = max(side / img.width, side / img.height)          # покрываем круг целиком
+            big = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.Resampling.LANCZOS)
+            left, top = (big.width - side) // 2, (big.height - side) // 2
+            disc.alpha_composite(big.crop((left, top, left + side, top + side)))
+        else:
+            k = min(side / img.width, side / img.height) * 0.88
+            fitted = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.Resampling.LANCZOS)
+            disc.alpha_composite(fitted, ((side - fitted.width) // 2, (side - fitted.height) // 2))
         big = Image.new("L", (side * 4, side * 4), 0)            # сглаженный край круга
         ImageDraw.Draw(big).ellipse((0, 0, side * 4 - 1, side * 4 - 1), fill=255)
         disc.putalpha(big.resize((side, side), Image.Resampling.LANCZOS))
