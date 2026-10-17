@@ -230,12 +230,14 @@ class A4LayoutEngine:
         return disc
 
     def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0,
-                      circle: bool = False):
+                      circle: bool = False, raw: bool = False):
         """Trim + пропорциональный ресайз под сантиметры (300 DPI).
-        circle=True — фигурка вписывается в круглый топпер заданного диаметра."""
+        circle=True — фигурка вписывается в круглый топпер заданного диаметра.
+        raw=True — готовый макет из песочницы: фон не убираем и поля не режем, иначе собьётся размер."""
         img = Image.open(img_input) if isinstance(img_input, str) else img_input
-        img = self.drop_background(img.convert("RGBA"))
-        img = self._trim(img)
+        img = img.convert("RGBA")
+        if not raw:
+            img = self._trim(self.drop_background(img))
         if circle:
             # у круглого топпера линия реза — сам круг, поэтому внешний кант не добавляем:
             # иначе диаметр вырастал (6 -> 6.5 см) и на лист влезало меньше штук
@@ -269,7 +271,8 @@ class A4LayoutEngine:
 
         for n, cfg in enumerate(items_config, 1):
             img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"],
-                                           float(cfg.get("outline", 0) or 0), bool(cfg.get("circle")))
+                                           float(cfg.get("outline", 0) or 0), bool(cfg.get("circle")),
+                                           bool(cfg.get("raw")))
             bw, bh = w + self.gap_px, h + self.gap_px
             fits = (bw <= bin_w and bh <= bin_h) or (bh <= bin_w and bw <= bin_h)
             if not fits:
