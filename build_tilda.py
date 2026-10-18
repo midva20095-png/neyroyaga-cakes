@@ -1,6 +1,7 @@
 """Собирает tilda_block.html из static/index.html. Запуск: python build_tilda.py
 После любой правки интерфейса в static/index.html запустите заново и вставьте результат в Tilda."""
 import re
+from pathlib import Path
 
 SERVER = "https://neyroyaga-cakes-production.up.railway.app"   # адрес вашего сервера на Railway
 P = ".vb-x7k"
@@ -33,7 +34,19 @@ def scope(css):
         i = k
 
 
-css = scope(css) + f"\n{P}{{border-radius:18px;padding-bottom:24px}}{P} .login{{min-height:600px}}{P} header{{position:static}}"
+# Если рядом лежит theme_tilda.css — берём его как есть (неоновая тема, селекторы уже с префиксом).
+theme = Path("theme_tilda.css")
+if theme.exists():
+    css = theme.read_text(encoding="utf-8")
+    BGFX = ("\n<div class=\"bgfx\" aria-hidden=\"true\">\n"
+            "  <i class=\"r0\"></i><i class=\"r1\"></i><i class=\"r2\"></i><i class=\"r3\"></i><i class=\"r4\"></i>\n"
+            "  <i class=\"g\"></i><i class=\"g g2\"></i><i class=\"g g3\"></i><i class=\"g g4\"></i>\n"
+            "  <i class=\"blur\"></i><i class=\"blur blur2\"></i><i class=\"blur blur3\"></i>\n"
+            "  <i class=\"dot\"></i><i class=\"dot dot2\"></i><i class=\"dot dot3\"></i>"
+            "<i class=\"dot dot4\"></i><i class=\"dot dot5\"></i><i class=\"dot dot6\"></i>\n</div>\n")
+else:
+    css = scope(css) + f"\n{P}{{border-radius:18px;padding-bottom:24px}}{P} .login{{min-height:600px}}{P} header{{position:static}}"
+    BGFX = ""
 
 # разметка: уникальные id и без inline-обработчиков (в Tilda глобальный $ — это jQuery)
 body = body.replace("""onclick="$('dlg').close()\"""", 'id="dclose"')
@@ -65,7 +78,7 @@ out = f"""<!-- НейроЯга: блок для Tilda. Вставьте цел�
 <style>
 {css}
 </style>
-{body.strip()}
+{BGFX}{body.strip()}
 <script>
 {js}
 </script>

@@ -1,3 +1,6 @@
+// Сколько кредитов получает НОВЫЙ пользователь. 0 — бесплатных кредитов нет.
+var START_CREDITS = 0;
+
 function doPost(e) {
   // АКТИВИРУЕМ БЛОКИРОВКУ СЛУЖБЫ GOOGLE ДЛЯ ЗАЩИТЫ ОТ МНОГОПОТОЧНОСТИ
   var lock = LockService.getScriptLock();
@@ -52,7 +55,7 @@ function doPost(e) {
           return responseJSON({ success: false, error: "Неверный пароль" });
         }
       } else {
-        var initialCredits = 10;
+        var initialCredits = START_CREDITS;
         sheet.appendRow([email, password, initialCredits]);
         SpreadsheetApp.flush(); // Принудительно сохраняем изменения в базу перед снятием лока
         return responseJSON({ success: true, credits: initialCredits });
@@ -62,8 +65,8 @@ function doPost(e) {
     // 2. СПИСАНИЕ КРЕДИТОВ (Модели Nano Banana / Flash)
     if (action === "deduct") {
       if (userRowIndex === -1) {
-        sheet.appendRow([email, "123456", 10]);
-        currentCredits = 10;
+        sheet.appendRow([email, "123456", START_CREDITS]);
+        currentCredits = START_CREDITS;
         SpreadsheetApp.flush();
         userRowIndex = sheet.getLastRow();
       }

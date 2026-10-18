@@ -259,15 +259,16 @@ class A4LayoutEngine:
         nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
         return img.resize((nw, nh), Image.Resampling.LANCZOS), nw, nh
 
-    def generate_pdf(self, items_config: list, output_pdf_path: str) -> int:
+    def generate_pdf(self, items_config: list, output_pdf_path: str, sheet_h_mm: float = PAGE_H_MM) -> int:
         """items_config: [{"image": PIL.Image, "type": "height|width|diameter", "size": см, "copies": n}]
         Возвращает число листов A4."""
         rects, groups, owners = [], [], []   # уникальные картинки; owners[rid] -> индекс картинки
         # лист для укладки берём на один зазор больше: крайним элементам зазор по внешней
         # стороне не нужен, иначе в ряд не влезает лишняя колонка (12 кругов по 6 см уходили на 2 листа)
-        bin_w, bin_h = self.work_w_px + self.gap_px, self.work_h_px + self.gap_px
+        work_h_px = round((sheet_h_mm - MARGIN_MM - MARGIN_BOTTOM_MM) * MM_PX)
+        bin_w, bin_h = self.work_w_px + self.gap_px, work_h_px + self.gap_px
         max_w = (PAGE_W_MM - 2 * MARGIN_MM) / 10
-        max_h = (PAGE_H_MM - MARGIN_MM - MARGIN_BOTTOM_MM) / 10
+        max_h = (sheet_h_mm - MARGIN_MM - MARGIN_BOTTOM_MM) / 10
 
         for n, cfg in enumerate(items_config, 1):
             img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"],
@@ -293,9 +294,9 @@ class A4LayoutEngine:
         for b, x, y, w, h, rid in result:
             pages.setdefault(b, []).append((x, y, w, h, rid))
 
-        c = canvas.Canvas(output_pdf_path, pagesize=A4)
-        c.setTitle("Sugar print layout A4")
-        page_h = A4[1]
+        c = canvas.Canvas(output_pdf_path, pagesize=(PAGE_W_MM * mm, sheet_h_mm * mm))
+        c.setTitle("Sugar print layout")
+        page_h = sheet_h_mm * mm
         for i, b in enumerate(sorted(pages)):
             if i:
                 c.showPage()
@@ -313,10 +314,9 @@ class A4LayoutEngine:
         c.save()
         return len(pages)
 
-    def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path):
-        """Один макет точного размера (в мм) по центру A4. Круг — с круглой обрезкой, остальное — вписывается без искажений."""
-        if w_mm > PAGE_W_MM or h_mm > PAGE_H_MM:
-            raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на A4 (210×297 мм)")
+    @staticmethod
+    def fit_exact(img, w_mm, h_mm, circle):
+        """Картинка точного размера: круг обрезается по центру, прямоугольник вписывается."""
         img = img.convert("RGBA")
         tw, th = round(w_mm * MM_PX), round(h_mm * MM_PX)
         if circle:
@@ -326,14 +326,31 @@ class A4LayoutEngine:
             mask = Image.new("L", (tw * 4, th * 4), 0)
             ImageDraw.Draw(mask).ellipse((0, 0, tw * 4 - 1, th * 4 - 1), fill=255)
             fitted.putalpha(mask.resize((tw, th), Image.Resampling.LANCZOS))
-        else:
-            k = min(tw / img.width, th / img.height)
-            nw, nh = max(1, round(img.width * k)), max(1, round(img.height * k))
-            fitted = Image.new("RGBA", (tw, th), (255, 255, 255, 255))
-            fitted.alpha_composite(img.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
-        c = canvas.Canvas(output_pdf_path, pagesize=A4)
+            return fitted
+        k = min(tw / img.width, th / img.height)
+        nw, nh = max(1, round(img.width * k)), max(1, round(img.height * k))
+        out = Image.new("RGBA", (tw, th), (255, 255, 255, 255))
+        out.alpha_composite(img.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
+        return out
+
+    def export_jpg(self, img, w_mm, h_mm, circle, output_path, dpi=DPI):
+        """Макет точного размера в JPG 300 DPI — для печати без PDF."""
+        fitted = self.fit_exact(img, w_mm, h_mm, circle)
+        flat = Image.new("RGB", fitted.size, (255, 255, 255))
+        flat.paste(fitted, mask=fitted.getchannel("A"))
+        flat.save(output_path, "JPEG", quality=95, dpi=(dpi, dpi))
+        return 1
+
+    def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path, sheet_h_mm=PAGE_H_MM):
+        """Один макет точного размера (в мм) по центру A4. Круг — с круглой обрезкой, остальное — вписывается без искажений."""
+        if w_mm > PAGE_W_MM or h_mm > sheet_h_mm:
+            raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на лист "
+                             f"{PAGE_W_MM:g}×{sheet_h_mm:g} мм")
+        fitted = self.fit_exact(img, w_mm, h_mm, circle)
+        page = (PAGE_W_MM * mm, sheet_h_mm * mm)
+        c = canvas.Canvas(output_pdf_path, pagesize=page)
         c.setTitle("Sugar print exact size")
-        x, y = (A4[0] - w_mm * mm) / 2, (A4[1] - h_mm * mm) / 2
+        x, y = (page[0] - w_mm * mm) / 2, (page[1] - h_mm * mm) / 2
         c.drawImage(ImageReader(fitted), x, y, w_mm * mm, h_mm * mm, mask="auto")
         if y >= MARGIN_BOTTOM_MM * mm:        # служебная линейка — только если есть место в поле листа
             self._draw_service_marks(c)

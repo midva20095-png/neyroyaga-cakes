@@ -57,6 +57,10 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
 .gi img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px;pointer-events:none}
 .gi b{display:block;font-size:12px;margin-top:6px;font-weight:600}
 #galwrap{max-width:1120px;margin:0 auto 24px;padding:0 16px}
+.help h3{margin:16px 0 4px;font-size:15px}
+.help p,.help ul{margin:4px 0;font-size:14px;line-height:1.55}
+.help ul{padding-left:20px}
+.help li{margin:2px 0}
 .tabs{display:flex;gap:6px;flex-wrap:wrap}
 .tabs button{flex:1;min-width:110px;padding:9px 8px;font-size:13px;background:var(--lilac);color:var(--ink);border:1.5px solid var(--line)}
 .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
@@ -101,6 +105,7 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <button data-tab="art">🎨 Нарисовать ИИ</button>
         <button data-tab="hand">✋ Вручную</button>
         <button data-tab="sand">🧩 Песочница</button>
+        <button data-tab="help">📖 Инструкция</button>
       </div>
 
       <div id="t-cut">
@@ -108,6 +113,7 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <button id="refbtn" class="ghost">Загрузить фото или картинку</button>
         <input id="refin" type="file" accept="image/*" hidden>
         <label>Что вырезать<input id="what" maxlength="200" placeholder="торт со свечами"></label>
+        <p class="msg">Напишите только сам объект. Если он стоит на чём-то, уточните: «только бабочка, без цветка» — тогда подставка точно уйдёт.</p>
         <button id="cut" class="main"></button>
       </div>
 
@@ -130,9 +136,11 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
       <div id="t-art" class="hide">
         <p class="msg">ИИ нарисует картинку по описанию. Образец можно не загружать.</p>
         <button id="refbtn3" class="ghost">Образец (необязательно)</button>
+        <div id="artloaded" class="chip hide"><img id="artprev" alt="Образец"><span>Образец загружен</span><button id="artrm" class="ghost">✕ Убрать</button></div>
         <label>Что нарисовать
           <textarea id="prompt" rows="3" maxlength="500" placeholder="Например: щенок в костюме космонавта. Только он, без лишних предметов."></textarea>
         </label>
+        <p class="msg">Нужна надпись — напишите её в кавычках: щенок и надпись «Вперёд, к знаниям!». Без кавычек ИИ нарисует без текста. Надёжнее добавить надпись в песочнице: там буквы точно без ошибок.</p>
         <label>Стиль
           <select id="style"><option value="">Без стиля</option><option value="cartoon">Мультяшный</option><option value="watercolor">Акварель</option><option value="flat">Плоский, минимализм</option><option value="3d">3D-рендер</option><option value="realistic">Реалистичный</option><option value="line-art">Контурный лайн-арт</option></select>
         </label>
@@ -143,7 +151,16 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <p class="msg">Бесплатно: сами обведите нужные детали на картинке и отправьте их в макет.</p>
         <button id="refbtn4" class="ghost">Загрузить картинку</button>
         <label id="toolwrap" class="hide">Как выделять
-          <select id="tool"><option value="box">Рамкой: обвести мышью</option><option value="auto">По объекту: клик по фигурке</option></select>
+          <select id="tool">
+            <option value="box">Рамка: обвести прямоугольником</option>
+            <option value="ellipse">Овал: обвести кругом или овалом</option>
+            <option value="lasso">Лассо: обвести по контуру от руки</option>
+            <option value="auto">По объекту: клик по фигурке</option>
+            <option value="wand">Палочка: клик по фону, чтобы убрать его</option>
+          </select>
+        </label>
+        <label id="tolwrap" class="hide">Чувствительность палочки<input id="tol" type="range" min="10" max="90" value="38"></label>
+        <label class="hide">
         </label>
         <div id="regs" class="regs"></div>
         <button id="toitems" class="ghost hide">Отправить детали в макет</button>
@@ -151,33 +168,145 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
       </div>
 
       <div id="t-sand" class="hide">
-        <p class="msg">Соберите макет сами: выберите формат, добавьте объекты и расставьте их мышью.</p>
+        <p class="msg">Соберите макет сами: выберите формат, добавьте объекты и расставьте их мышью. Для капкейков возьмите круг 6 см и печать копиями.</p>
         <label>Формат макета
           <select id="sfmt">
-            <option value="c160">Круг 16 см</option><option value="c200">Круг 20 см</option>
-            <option value="c60">Круг 6 см (капкейк)</option><option value="r210x297">Лист A4</option>
+            <option value="c160">Круг 16 см</option>
+            <option value="c200">Круг 20 см</option>
+            <option value="cup12">Капкейки: лист из 12 топперов 6 см</option>
+            <option value="c60">Один топпер, круг 6 см</option>
+            <option value="s100">Квадрат 10 × 10 см</option>
+            <option value="s160">Квадрат 16 × 16 см</option>
+            <option value="r148x210">Прямоугольник A5, 148 × 210 мм</option>
+            <option value="r210x297">Лист A4 целиком</option>
             <option value="custom">Свой размер, мм</option>
           </select>
         </label>
-        <div id="scustom" class="f2 hide">
-          <label>Ширина, мм<input id="swmm" type="number" value="160" min="20" max="210"></label>
-          <label>Высота, мм<input id="shmm" type="number" value="160" min="20" max="297"></label>
+        <div id="scustom" class="hide">
+          <div class="f2">
+            <label>Ширина, мм<input id="swmm" type="number" value="160" min="20" max="210"></label>
+            <label>Высота, мм<input id="shmm" type="number" value="160" min="20" max="297"></label>
+          </div>
+          <label>Форма<select id="sshape"><option value="rect">Прямоугольник</option><option value="circle">Круг (по ширине)</option></select></label>
         </div>
-        <label>Фон макета<input id="sbg" type="color" value="#ffffff" style="height:42px;padding:4px"></label>
+        <label>Что напечатать
+          <select id="smode">
+            <option value="one">Один макет по центру листа A4</option>
+            <option value="many">Несколько копий, разложить по листам A4</option>
+          </select>
+        </label>
+        <label id="scopieswrap" class="hide">Сколько копий<input id="scopies" type="number" value="12" min="1" max="100"></label>
+        <div class="f2">
+          <label>Формат файла<select id="sfile">
+            <option value="pdf">PDF для печати</option>
+            <option value="jpg">JPG, картинка 300 DPI</option>
+          </select></label>
+          <label>Лист<select id="ssheet">
+            <option value="0">Целый A4 (210×297 мм)</option>
+            <option value="1">Половина A4 (210×148 мм)</option>
+          </select></label>
+        </div>
+        <p class="msg">Половина листа — для печати на остатках бумаги. Макет должен быть не выше 148 мм.</p>
+        <label>Фон макета (печатается как есть, обычно белый)<input id="sbg" type="color" value="#ffffff" style="height:42px;padding:4px"></label>
         <div class="sbrow">
           <button id="sown" class="ghost">Добавить свою картинку</button>
           <input id="sownin" type="file" accept="image/*" multiple hidden>
           <button id="sfromitems" class="ghost">Взять из макета A4</button>
         </div>
+        <label>Надпись на макете<input id="stext" maxlength="60" placeholder="Настя, 3 годика"></label>
+        <div class="f2">
+          <label>Шрифт<select id="sfont">
+            <option value="Georgia,serif">Georgia</option><option value="Arial,sans-serif">Arial</option>
+            <option value="'Comic Sans MS',cursive">Comic Sans</option><option value="Impact,sans-serif">Impact</option>
+            <option value="'Times New Roman',serif">Times</option></select></label>
+          <label>Цвет<input id="scolor" type="color" value="#d6336c" style="height:42px;padding:4px"></label>
+        </div>
+        <div class="f2">
+          <label>Форма надписи<select id="sarc">
+            <option value="0">Прямая строка</option>
+            <option value="1">По дуге вверх (над рисунком)</option>
+            <option value="-1">По дуге вниз (под рисунком)</option>
+          </select></label>
+          <label>Изгиб дуги<input id="sarcv" type="range" min="20" max="100" value="55"></label>
+        </div>
+        <button id="saddtext" class="ghost">Добавить надпись на макет</button>
+        <label>Фон из каталога</label>
+        <div id="bglib" class="lib"></div>
+        <p id="bghint2" class="msg">Фон ставится на весь макет. Списывается <b id="p-bgr"></b> кр. за фон.</p>
+        <button id="bgclear" class="ghost hide">Убрать фон</button>
         <label>Библиотека объектов</label>
         <input id="slibsearch" placeholder="Поиск: шар, цифра, торт…">
         <div id="slib" class="lib"></div>
       </div>
 
+      <div id="t-help" class="hide">
+        <p class="msg">Здесь описано, что умеет студия и сколько стоит. Можно посмотреть демо: система сама соберёт пример макета, ничего не списывая.</p>
+        <div class="sbrow">
+          <button id="demo" class="main">▶ Показать демо</button>
+          <button id="demostop" class="ghost hide">Остановить</button>
+        </div>
+        <p id="demomsg" class="msg"></p>
+
+        <div class="help">
+          <h3>Сколько стоит</h3>
+          <ul>
+            <li>Готовый PDF без ИИ (песочница, раскладка, галерея) — <b id="p-pdf"></b> кр.</li>
+            <li>Нарисовать картинку ИИ — <b id="p-ai"></b> кр.</li>
+            <li>Вырезать объект с фото — <b id="p-cut"></b> кр.</li>
+            <li>Заменить фон — <b id="p-bg"></b> кр.</li>
+            <li>Улучшить собранный макет — <b id="p-enh"></b> кр.</li>
+            <li>Перерисовать одну вырезанную деталь — <b id="p-fix"></b> кр.</li>
+            <li>Фон из каталога в песочницу — <b id="p-bg2"></b> кр.</li>
+          </ul>
+          <p class="msg">1 кредит = 1 ₽. Списывается только за результат: если ИИ не справился, кредиты возвращаются.</p>
+
+          <h3>✂️ Вырезать объект</h3>
+          <p>Загрузите фото, напишите, что вырезать («торт со свечами»), нажмите кнопку. ИИ уберёт фон и поставит объект на белый. Если объект стоит на чём-то, уточните: «только бабочка, без цветка». Результат попадёт в «Печать и раскладка».</p>
+
+          <h3>🖼 Заменить фон</h3>
+          <p>Загрузите картинку с объектом и картинку нового фона, выберите формат (1:1, 9:16 и другие) и нажмите кнопку. Объект переедет на новый фон.</p>
+
+          <h3>🎨 Нарисовать ИИ</h3>
+          <p>Опишите картинку и выберите стиль. Образец можно приложить — тогда ИИ будет держаться его. Нужна надпись — пишите её в кавычках: щенок и надпись «Вперёд, к знаниям!». Но надёжнее добавить надпись в песочнице: там буквы точно без ошибок.</p>
+
+          <h3>✋ Вручную — бесплатно</h3>
+          <p>Загрузите картинку и вырежьте детали сами, пятью способами:</p>
+          <ul>
+            <li><b>Рамка</b> — обвести прямоугольником.</li>
+            <li><b>Овал</b> — обвести кругом, углы останутся прозрачными.</li>
+            <li><b>Лассо</b> — обвести контур от руки, не отпуская кнопку.</li>
+            <li><b>По объекту</b> — наведите курсор, появится рамка, клик вырежет фигурку целиком.</li>
+            <li><b>Палочка</b> — клик по фону убирает его, чувствительность задаётся ползунком.</li>
+          </ul>
+          <p>Готовые детали отправляются в макет кнопкой «Отправить детали в макет». Если край рваный, рядом с деталью есть кнопка «✨ ИИ».</p>
+
+          <h3>🧩 Песочница — сборка макета</h3>
+          <p>Выберите формат: круг 16 или 20 см, лист из 12 топперов по 6 см, квадрат, A5, A4 или свой размер. Добавьте объекты из библиотеки, свои картинки или результаты ИИ. Объекты двигаются мышью и пальцем, угол выделения тянет размер, есть поворот, отражение, копия и слои. Надпись добавляется с выбором шрифта и цвета.</p>
+          <p>Печать двумя способами: один макет по центру листа A4 или несколько копий, разложенных по листам.</p>
+
+          <h3>🖨 Печать и раскладка</h3>
+          <p>Каждой картинке задаются свои размер, количество, обводка (белый кант 2.5 мм под ножницы) и форма — по контуру или круг. Режимы: набор наклеек, сетка под капкейки и один макет точного размера.</p>
+
+          <h3>🛒 Галерея</h3>
+          <p>Готовые макеты. На превью стоит водяной знак, в купленном PDF его нет. Выберите формат и количество и скачайте PDF.</p>
+
+          <h3>Как печатать</h3>
+          <p>Печатайте в масштабе 100% («Фактический размер»), не «по размеру страницы», иначе сантиметры уедут. На каждом листе внизу есть линейка 100 мм — приложите к распечатке и проверьте.</p>
+        </div>
+      </div>
+
       <canvas id="refc" class="hide"></canvas>
       <p id="rhint" class="msg"></p>
       <p id="st" class="msg" aria-live="polite"></p>
-      <img id="prev" class="thumb hide" alt="Результат">
+      <div id="resbox" class="hide">
+        <p id="resmsg" class="msg ok"></p>
+        <img id="prev" class="thumb" alt="Результат">
+        <div class="sbrow">
+          <button id="tosand" class="ghost">Открыть в песочнице</button>
+          <button id="again" class="ghost">Сделать ещё раз</button>
+          <button id="resclose" class="ghost">Скрыть</button>
+        </div>
+      </div>
     </section>
 
     <section id="sandpanel" class="paper hide">
@@ -194,6 +323,10 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
       <div class="sbrow">
         <label class="grow">Размер выбранного, %<input id="ssize" type="range" min="5" max="200" value="40"></label>
         <label class="grow">Поворот<input id="srot" type="range" min="-180" max="180" value="0"></label>
+      </div>
+      <div class="sbrow">
+        <button id="senhance" class="ghost"></button>
+        <span class="msg grow">ИИ аккуратно улучшит качество макета, сохранив композицию и надписи.</span>
       </div>
       <div class="bar"><span id="shint" class="grow msg">Перетаскивайте объекты мышью или пальцем. Угол выделения тянет размер.</span>
         <button id="sprint" class="main"></button></div>
@@ -236,8 +369,11 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
           <label>Количество<input id="gcopies" type="number" value="1" min="1" max="100"></label>
         </div>
         <div id="gcustom" class="f2 hide"><label>Ширина, мм<input id="gw" type="number" value="150" min="11" max="210"></label><label>Высота, мм<input id="gh" type="number" value="150" min="11" max="297"></label></div>
-        <div class="bar" style="margin-top:12px"><span id="galpick" class="grow msg"></span><button id="gbuy" class="main"></button></div>
+        <div class="bar" style="margin-top:12px"><span id="galpick" class="grow msg"></span>
+          <button id="gsand" class="ghost"></button>
+          <button id="gbuy" class="main"></button></div>
         <p id="galout" class="msg" aria-live="polite"></p>
+        <button id="gsand2" class="ghost hide">Открыть купленный макет в песочнице (бесплатно)</button>
       </div>
     </section>
   </div>
@@ -256,7 +392,7 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
 const $=id=>document.getElementById(id);
 const ORIGIN=window.API_BASE||location.origin, WS_ORIGIN=ORIGIN.replace(/^http/,'ws');
 const JSONH={'Content-Type':'application/json'};
-let email='',ws=null,retry=0,busy=false,items=[],uid=0,sel=0,mode='sheet',PRICE={ai:50,pdf:50,fix:25,cut:50,bg:50};
+let email='',ws=null,retry=0,busy=false,items=[],uid=0,sel=0,mode='sheet',aiMode='art',lastSrc=null,lastAI=null,PRICE={pdf:10,background:3,ai:50,cut:50,bg:50,enhance:50,fix:25};
 let rimg=null,regs=[],drag=null;
 
 const say=(el,t,cls='')=>{el.textContent=t;el.className='msg '+cls};
@@ -267,11 +403,16 @@ const shrink=(url,max=1024)=>new Promise(res=>{const i=new Image();i.onload=()=>
   c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.88))};i.src=url});
 const err=j=>{const d=j&&j.detail;return typeof d==='string'?d:(d&&d[0]&&d[0].msg)||'Ошибка сервера'};
 function labels(){
-  $('build').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('pp').textContent=PRICE.pdf;$('gbuy').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;
+  $('build').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('pp').textContent=PRICE.pdf;$('gbuy').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('gsand').textContent=`Открыть в песочнице за ${PRICE.pdf} кр.`;
   $('cut').textContent=busy?'Работаю…':`Вырезать объект за ${PRICE.cut} кр.`;
   $('bggo').textContent=busy?'Работаю…':`Заменить фон за ${PRICE.bg} кр.`;
   $('gen').textContent=busy?'Рисую…':`Нарисовать за ${PRICE.ai} кр.`;
   $('sprint').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;
+  $('p-pdf').textContent=PRICE.pdf;$('p-ai').textContent=PRICE.ai;$('p-cut').textContent=PRICE.cut;
+  $('p-bg').textContent=PRICE.bg;$('p-enh').textContent=PRICE.enhance;$('p-fix').textContent=PRICE.fix;
+  $('p-bg2').textContent=PRICE.background;
+  $('senhance').textContent=busy?'Улучшаю…':`✨ Улучшить макет ИИ за ${PRICE.enhance} кр.`;
+  $('p-bgr').textContent=PRICE.background;
 }
 
 /* ---- вход ---- */
@@ -364,9 +505,71 @@ function boxAt(cx,cy){                                  // рамка объек
   const s=1/marks.k;
   return {x:x0*s,y:y0*s,w:(x1-x0+1)*s,h:(y1-y0+1)*s};
 }
-rc.onpointerdown=e=>{if($('tool').value==='auto')return;drag=pt(e);rc.setPointerCapture(e.pointerId)};
+let lasso=null;
+function cropShape(kind,box,pts){
+  /* Вырезает по форме: прямоугольник, овал или лассо. Вне формы — прозрачно. */
+  const k=rimg.width/rc.width,W=Math.max(1,Math.round(box.w*k)),H=Math.max(1,Math.round(box.h*k));
+  const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+  g.save();
+  if(kind==='ellipse'){g.beginPath();g.ellipse(W/2,H/2,W/2,H/2,0,0,7);g.clip()}
+  else if(kind==='lasso'&&pts&&pts.length>2){
+    g.beginPath();g.moveTo((pts[0][0]-box.x)*k,(pts[0][1]-box.y)*k);
+    for(const p of pts.slice(1))g.lineTo((p[0]-box.x)*k,(p[1]-box.y)*k);
+    g.closePath();g.clip();
+  }
+  g.drawImage(rimg,box.x*k,box.y*k,box.w*k,box.h*k,0,0,W,H);
+  g.restore();
+  return c.toDataURL('image/png');
+}
+function wandCut(cx,cy){
+  /* Палочка: убираем связную область фона того же цвета, что под курсором. */
+  const W=rc.width,H=rc.height,c=document.createElement('canvas');
+  c.width=W;c.height=H;const g=c.getContext('2d');g.drawImage(rimg,0,0,W,H);
+  const d=g.getImageData(0,0,W,H),px=d.data,tol=+$('tol').value;
+  const i0=((cy|0)*W+(cx|0))*4,r0=px[i0],g0=px[i0+1],b0=px[i0+2];
+  const seen=new Uint8Array(W*H),st=[(cy|0)*W+(cx|0)];seen[st[0]]=1;
+  while(st.length){
+    const i=st.pop(),x=i%W,y=(i/W)|0;
+    px[i*4+3]=0;                                    // стираем пиксель фона
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=W||ny>=H)continue;
+      const j=ny*W+nx;if(seen[j])continue;
+      const o=j*4;
+      if(Math.max(Math.abs(px[o]-r0),Math.abs(px[o+1]-g0),Math.abs(px[o+2]-b0))<=tol){seen[j]=1;st.push(j)}
+    }
+  }
+  g.putImageData(d,0,0);
+  const box=(()=>{                                   // обрезаем по тому, что осталось
+    let x0=W,y0=H,x1=0,y1=0;
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      if(px[(y*W+x)*4+3]>20){if(x<x0)x0=x;if(y<y0)y0=y;if(x>x1)x1=x;if(y>y1)y1=y}
+    }
+    return x1>x0?{x:x0,y:y0,w:x1-x0+1,h:y1-y0+1}:null;
+  })();
+  if(!box)return null;
+  const k=rimg.width/W,out=document.createElement('canvas');
+  out.width=Math.round(box.w*k);out.height=Math.round(box.h*k);
+  const og=out.getContext('2d');
+  og.drawImage(rimg,box.x*k,box.y*k,box.w*k,box.h*k,0,0,out.width,out.height);
+  og.globalCompositeOperation='destination-in';     // оставляем только непрозрачные места
+  og.drawImage(c,box.x,box.y,box.w,box.h,0,0,out.width,out.height);
+  return {url:out.toDataURL('image/png'),box};
+}
+rc.onpointerdown=e=>{
+  const t=$('tool').value;
+  if(t==='auto'||t==='wand')return;
+  drag=pt(e);lasso=t==='lasso'?[drag]:null;rc.setPointerCapture(e.pointerId);
+};
 rc.onpointerleave=()=>{if(hover){hover=null;drawRef()}};
 rc.onclick=e=>{
+  if($('tool').value==='wand'&&rimg){
+    const [x,y]=pt(e);say($('rhint'),'Убираю фон…');
+    const r=wandCut(x,y);
+    if(!r)return say($('rhint'),'Не удалось: попробуйте другую чувствительность.','err');
+    regs.push({...r.box,url:r.url});drawRef();listRegs();
+    say($('rhint'),`Фон убран. Всего деталей: ${regs.length}. Если убралось лишнее — измените чувствительность.`,'ok');
+    return;
+  }
   if($('tool').value!=='auto'||!rimg)return;
   const [x,y]=pt(e),b=boxAt(x,y);
   if(!b)return say($('rhint'),'Здесь только фон — наведите курсор на саму фигурку.','err');
@@ -376,10 +579,32 @@ rc.onclick=e=>{
   say($('rhint'),`Объект выделен целиком. Всего деталей: ${regs.length}.`,'ok');
 };
 $('what').oninput=()=>{$('what2').value=$('what').value};
-$('tool').onchange=e=>{rc.style.cursor=e.target.value==='auto'?'pointer':'crosshair';
-  say($('rhint'),e.target.value==='auto'?'Кликните по фигурке — она выделится целиком, со всеми мелкими деталями.':'Обведите нужную деталь мышью.');};
+$('tool').onchange=e=>{
+  const t=e.target.value,click=t==='auto'||t==='wand';
+  rc.style.cursor=click?'pointer':'crosshair';
+  $('tolwrap').classList.toggle('hide',t!=='wand');
+  say($('rhint'),{
+    box:'Обведите деталь прямоугольной рамкой.',
+    ellipse:'Обведите деталь овалом: углы останутся прозрачными.',
+    lasso:'Обведите контур от руки, не отпуская кнопку.',
+    auto:'Наведите курсор на фигурку: появится рамка. Клик — и она вырезана целиком.',
+    wand:'Кликните по фону, и он уберётся. Ползунком задайте чувствительность.'
+  }[t]);
+};
 rc.onpointermove=e=>{
-  if($('tool').value==='auto'){                        // подсветка: видно, что захватится до клика
+  const t=$('tool').value;
+  if(t==='lasso'&&drag){
+    const p=pt(e);lasso.push(p);drawRef();
+    rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.setLineDash([5,4]);
+    rx.beginPath();rx.moveTo(lasso[0][0],lasso[0][1]);for(const q of lasso)rx.lineTo(q[0],q[1]);
+    rx.stroke();rx.setLineDash([]);return;
+  }
+  if(t==='ellipse'&&drag){
+    const p=pt(e);drawRef();rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.setLineDash([6,4]);
+    rx.beginPath();rx.ellipse((drag[0]+p[0])/2,(drag[1]+p[1])/2,Math.abs(p[0]-drag[0])/2,Math.abs(p[1]-drag[1])/2,0,0,7);
+    rx.stroke();rx.setLineDash([]);return;
+  }
+  if(t==='auto'){                        // подсветка: видно, что захватится до клика
     const [x,y]=pt(e),b=boxAt(x,y);
     if(JSON.stringify(b)===JSON.stringify(hover))return;
     hover=b;drawRef();
@@ -389,8 +614,23 @@ rc.onpointermove=e=>{
   }
   if(!drag)return;const p=pt(e);drawRef();rx.strokeStyle='#d6336c';rx.lineWidth=2;rx.setLineDash([6,4]);rx.strokeRect(drag[0],drag[1],p[0]-drag[0],p[1]-drag[1]);rx.setLineDash([])};
 rc.onpointerup=e=>{
-  if(!drag)return;const p=pt(e),x=Math.min(drag[0],p[0]),y=Math.min(drag[1],p[1]),w=Math.abs(p[0]-drag[0]),h=Math.abs(p[1]-drag[1]);drag=null;
-  if(w>12&&h>12){const k=rimg.width/rc.width;regs.push({x,y,w,h,url:cropReg(x*k,y*k,w*k,h*k)})}
+  if(!drag)return;
+  const t=$('tool').value,p=pt(e);
+  if(t==='lasso'){
+    const pts=lasso||[];drag=null;lasso=null;
+    if(pts.length>8){
+      const xs=pts.map(q=>q[0]),ys=pts.map(q=>q[1]);
+      const box={x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys)};
+      if(box.w>12&&box.h>12)regs.push({...box,url:cropShape('lasso',box,pts)});
+    }
+    drawRef();listRegs();return;
+  }
+  const x=Math.min(drag[0],p[0]),y=Math.min(drag[1],p[1]),w=Math.abs(p[0]-drag[0]),h=Math.abs(p[1]-drag[1]);
+  drag=null;
+  if(w>12&&h>12){
+    const box={x,y,w,h};
+    regs.push({...box,url:t==='ellipse'?cropShape('ellipse',box):cropShape('box',box)});
+  }
   drawRef();listRegs();
 };
 $('regs').onclick=e=>{
@@ -405,10 +645,11 @@ $('tabs').onclick=e=>{
   const b=e.target.closest('[data-tab]');if(!b)return;
   tab=b.dataset.tab;
   $('tabs').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
-  [['cut',$('t-cut')],['bg',$('t-bg')],['art',$('t-art')],['hand',$('t-hand')],['sand',$('t-sand')]].forEach(([t,el])=>el.classList.toggle('hide',t!==tab));
+  [['cut',$('t-cut')],['bg',$('t-bg')],['art',$('t-art')],['hand',$('t-hand')],['sand',$('t-sand')],['help',$('t-help')]].forEach(([t,el])=>el.classList.toggle('hide',t!==tab));
   $('sandpanel').classList.toggle('hide',tab!=='sand');
   $('a4panel').classList.toggle('hide',tab==='sand');
-  if(tab==='sand'&&!SB.lib.length)sbLoadLib();
+  if(tab==='sand'&&!SB.lib.length){sbLoadLib();sbLoadBg()}
+  if(tab==='art')showRef();
   $('refc').classList.toggle('hide',!(rimg&&tab==='hand'));           // холст нужен только для ручного выделения
   say($('rhint'),'');say($('st'),'');
 };
@@ -417,14 +658,21 @@ $('ratios').onclick=e=>{
   ratio=b.dataset.r;$('ratios').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
 };
 [$('refbtn'),$('refbtn2'),$('refbtn3'),$('refbtn4')].forEach(b=>b.onclick=()=>$('refin').click());
+function showRef(){                                  // показываем, что образец прикреплён
+  const on=!!rimg;
+  $('artloaded').classList.toggle('hide',!on);
+  if(on)$('artprev').src=rimg.src;
+  $('refbtn3').textContent=on?'Заменить образец':'Образец (необязательно)';
+}
+$('artrm').onclick=()=>{rimg=null;regs=[];marks=null;hover=null;listRegs();showRef();$('refc').classList.add('hide');say($('st'),'Образец убран.')};
 $('refin').onchange=async e=>{
   const f=e.target.files[0];if(!f)return;const url=await readFile(f);
-  const i=new Image();i.onload=()=>{rimg=i;regs=[];marks=null;hover=null;rc.width=Math.min(i.width,680);rc.height=Math.round(i.height*rc.width/i.width);if(tab==='hand')rc.classList.remove('hide');$('toolwrap').classList.remove('hide');drawRef();listRegs();try{analyze()}catch(x){marks=null}};
+  const i=new Image();i.onload=()=>{rimg=i;regs=[];marks=null;hover=null;rc.width=Math.min(i.width,680);rc.height=Math.round(i.height*rc.width/i.width);if(tab==='hand')rc.classList.remove('hide');$('toolwrap').classList.remove('hide');drawRef();listRegs();showRef();try{analyze()}catch(x){marks=null}};
   i.src=url;e.target.value='';
 };
 
 /* ---- генерация ИИ (WebSocket) ---- */
-function setBusy(b){busy=b;[$('gen'),$('cut'),$('bggo')].forEach(x=>x.disabled=b);labels()}
+function setBusy(b){busy=b;[$('gen'),$('cut'),$('bggo'),$('senhance')].forEach(x=>x.disabled=b);labels()}
 function connect(){
   ws=new WebSocket(`${WS_ORIGIN}/ws/${encodeURIComponent(email)}`);
   ws.onopen=()=>{retry=0;say($('st'),'Соединение с сервером установлено.','ok')};
@@ -434,9 +682,16 @@ function connect(){
     if(m.credits!=null)setCredits(m.credits);
     if(m.type==='art'){
       const src=`data:${m.mimeType||'image/png'};base64,${m.data}`;
+      if(aiMode==='enhance'){                        // улучшенный макет возвращается в песочницу
+        SB.objs=[];SB.sel=null;
+        sbAdd(src);say($('sout'),'Макет улучшен. Проверьте и скачивайте PDF.','ok');
+        setBusy(false);return;
+      }
       try{addItem(src)}catch(x){say($('st'),'Не удалось показать результат: '+x.message,'err')}
-      $('prev').src=src;$('prev').classList.remove('hide');   // результат виден прямо под кнопкой
-      if(innerWidth<=800)$('items').scrollIntoView({behavior:'smooth',block:'center'});
+      lastSrc=src;
+      $('prev').src=src;$('resbox').classList.remove('hide');
+      say($('resmsg'),`Готово! Картинка добавлена в «Печать и раскладка» (всего там: ${items.length}). Задайте ей размер или откройте в песочнице.`,'ok');
+      $('resbox').scrollIntoView({behavior:'smooth',block:'nearest'});
     }
     if(m.text)say($('st'),m.text,m.type==='art'?'ok':'');
     if(m.done!==false)setBusy(false);
@@ -444,6 +699,8 @@ function connect(){
   ws.onclose=()=>{setBusy(false);if(!email)return;say($('st'),'Соединение потеряно, переподключаюсь…','err');setTimeout(connect,Math.min(1000*2**retry++,15000))};
 }
 function sendAI(mode,refs,price,title,prompt,ratio){
+  aiMode=mode;                                      // запоминаем, куда вернуть результат
+  lastAI=()=>sendAI(mode,refs,price,title,prompt,ratio);
   if(!ws||ws.readyState!==1)return say($('st'),'Нет соединения с сервером, подождите секунду…','err');
   if(busy)return say($('st'),'Дождитесь, пока закончится предыдущая обработка.','err');
   if(!confirm(`${title} Спишется ${price} кр. Продолжить?`))return;
@@ -571,6 +828,28 @@ $('gal').onclick=e=>{
   $('galpick').textContent='Выбрано: '+c.querySelector('b').textContent;
 };
 $('gfmt').onchange=e=>$('gcustom').classList.toggle('hide',e.target.value!=='custom');
+let bought=null;
+function toSandbox(src,msg){
+  $('tabs').querySelector('[data-tab=sand]').click();
+  $('sfmt').value='c200';sbFormat();                 // макеты из галереи обычно круглые
+  sbAdd(src);
+  setTimeout(()=>{const o=SB.sel;if(o){const k=bd.width/o.w;o.w*=k;o.h*=k;o.x=bd.width/2;o.y=bd.height/2;sbDraw()}},300);
+  say($('sout'),msg,'ok');
+}
+$('gsand2').onclick=()=>{if(bought)toSandbox(bought,'Макет открыт в песочнице: добавьте надпись или объекты и печатайте.')};
+$('gsand').onclick=async()=>{
+  const out=$('galout');if(!gsel)return say(out,'Сначала выберите макет.','err');
+  if(!confirm(`Макет откроется в песочнице для доработки. Спишется ${PRICE.pdf} кр. Продолжить?`))return;
+  $('gsand').disabled=true;say(out,'Открываю макет…');
+  try{
+    const r=await fetch(ORIGIN+'/api/gallery-open',{method:'POST',headers:JSONH,body:JSON.stringify({email,item_id:gsel})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
+    setCredits(j.credits);bought=j.image;say(out,'');
+    toSandbox(j.image,'Макет из галереи открыт. Добавьте надпись, объекты и печатайте.');
+  }catch(x){say(out,x.message,'err')}
+  $('gsand').disabled=false;
+};
 $('gbuy').onclick=async()=>{
   const out=$('galout');if(!gsel)return say(out,'Сначала выберите макет.','err');
   const f=$('gfmt').value;
@@ -584,30 +863,45 @@ $('gbuy').onclick=async()=>{
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
     setCredits(j.credits);out.className='msg ok';
     out.innerHTML=`Готово. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+    if(j.image){bought=j.image;$('gsand2').classList.remove('hide')}   // макет оплачен — можно доработать
   }catch(x){say(out,x.message,'err')}
   $('gbuy').disabled=false;
 };
 
 /* ================= Песочница: сборка макета из объектов ================= */
-const SB={w:160,h:160,round:true,bg:'#ffffff',objs:[],sel:null,lib:[]};
+const SB={w:160,h:160,round:true,bg:'#ffffff',bgimg:null,objs:[],sel:null,lib:[]};
 window.__nyBoard=SB;                            // для диагностики: состояние песочницы
 const bd=$('board'),bx=bd.getContext('2d');
 const PXMM=4;                                   // пикселей холста на миллиметр (экранный масштаб)
 function sbFormat(){
-  const f=$('sfmt').value;
-  if(f==='custom'){SB.w=+$('swmm').value||160;SB.h=+$('shmm').value||160;SB.round=false}
+  let f=$('sfmt').value;
+  if(f==='cup12'){                                  // готовый лист: круг 6 см в 12 копиях
+    f='c60';$('smode').value='many';$('scopies').value=12;
+    $('scopieswrap').classList.remove('hide');
+  }
+  if(f==='custom'){
+    SB.w=+$('swmm').value||160;SB.h=+$('shmm').value||160;SB.round=$('sshape').value==='circle';
+    if(SB.round)SB.h=SB.w;                          // круг: высота равна ширине
+  }
   else if(f==='r210x297'){SB.w=210;SB.h=297;SB.round=false}
-  else {const d={c160:160,c200:200,c60:60}[f];SB.w=SB.h=d;SB.round=true}
+  else if(f==='r148x210'){SB.w=148;SB.h=210;SB.round=false}
+  else if(f[0]==='s'){SB.w=SB.h=+f.slice(1);SB.round=false}
+  else {SB.w=SB.h=+f.slice(1);SB.round=true}
   bd.width=Math.round(SB.w*PXMM);bd.height=Math.round(SB.h*PXMM);
   bd.style.width=Math.min(520,bd.width)+'px';
-  $('sinfo').textContent=`${SB.w}×${SB.h} мм`+(SB.round?', круг':'');
+  $('sinfo').textContent=`${SB.w}×${SB.h} мм, `+(SB.round?'круг':'прямоугольник');
   sbDraw();
+}
+function drawCover(g,img,w,h){                               // фон заполняет макет целиком
+  const k=Math.max(w/img.width,h/img.height),iw=img.width*k,ih=img.height*k;
+  g.drawImage(img,(w-iw)/2,(h-ih)/2,iw,ih);
 }
 function sbDraw(){
   bx.clearRect(0,0,bd.width,bd.height);
   bx.save();
   if(SB.round){bx.beginPath();bx.ellipse(bd.width/2,bd.height/2,bd.width/2,bd.height/2,0,0,7);bx.clip()}
   bx.fillStyle=SB.bg;bx.fillRect(0,0,bd.width,bd.height);
+  if(SB.bgimg)drawCover(bx,SB.bgimg,bd.width,bd.height);     // фон из каталога под объектами
   for(const o of SB.objs){
     if(!o.img.complete||!o.img.naturalWidth)continue;
     bx.save();bx.translate(o.x,o.y);bx.rotate(o.rot*Math.PI/180);bx.scale(o.flip?-1:1,1);
@@ -646,6 +940,79 @@ function sbRenderLib(q){
   $('slib').innerHTML=list.map(o=>`<button data-u="${o.url}" title="${o.title}"><img src="${ORIGIN+o.url}" alt="${o.title}" loading="lazy"></button>`).join('')
     ||'<p class="msg">Ничего не найдено</p>';
 }
+function drawText(g,t,font,color,size){                 // цветная буква с белым кантом
+  g.font=`bold ${size}px ${font}`;g.textBaseline='middle';g.textAlign='center';
+  g.lineWidth=size*0.14;g.strokeStyle='#fff';g.lineJoin='round';
+  g.strokeText(t,0,0);g.fillStyle=color;g.fillText(t,0,0);
+}
+function textStraight(t,font,color){
+  const pad=24,size=120,m=document.createElement('canvas').getContext('2d');
+  m.font=`bold ${size}px ${font}`;
+  const c=document.createElement('canvas');
+  c.width=Math.ceil(m.measureText(t).width)+pad*2;c.height=size*1.6;
+  const g=c.getContext('2d');g.translate(c.width/2,c.height/2);
+  drawText(g,t,font,color,size);
+  return c;
+}
+function textArc(t,font,color,dir,curve){
+  /* Надпись по дуге: каждая буква ставится на окружность и поворачивается по касательной.
+     dir=1 — текст идёт поверху, dir=-1 — понизу, буквами наружу. curve — кривизна, 20…100. */
+  const size=120,m=document.createElement('canvas').getContext('2d');
+  m.font=`bold ${size}px ${font}`;
+  const chars=[...t],widths=chars.map(ch=>m.measureText(ch).width);
+  const len=widths.reduce((a,b)=>a+b,0);
+  const R=Math.max(len/3,len/(2*Math.PI)*(120/curve)*2.0);
+  const total=Math.min(Math.PI*1.6,len/R),half=Math.min(Math.PI/2,total/2);
+  const pad=size*0.9;                                   // поля, чтобы крайние буквы не срезались
+  const c=document.createElement('canvas');
+  c.width=Math.ceil(2*R*Math.sin(half)+size*1.6);
+  c.height=Math.ceil(R-R*Math.cos(half)+size*1.8+pad);
+  const g=c.getContext('2d');
+  g.translate(c.width/2,dir>0?R+pad:c.height-R-pad);     // центр окружности
+  let a=-total/2;
+  for(let i=0;i<chars.length;i++){
+    const step=widths[i]/R,f=a+step/2;
+    g.save();
+    g.rotate(dir>0?f:-f);                               // вверх — буквы к центру вниз; вниз — наоборот
+    g.translate(0,dir>0?-R:R);
+    drawText(g,chars[i],font,color,size);
+    g.restore();
+    a+=step;
+  }
+  return c;
+}
+$('saddtext').onclick=()=>{
+  const t=$('stext').value.trim();
+  if(!t)return say($('sout'),'Введите текст надписи.','err');
+  const dir=+$('sarc').value,font=$('sfont').value,color=$('scolor').value;
+  const c=dir===0?textStraight(t,font,color):textArc(t,font,color,dir,+$('sarcv').value);
+  sbAdd(c.toDataURL('image/png'),t);
+  say($('sout'),dir===0?'Надпись добавлена — перетащите её на место.'
+    :'Надпись по дуге добавлена. Меняется ползунком «Изгиб дуги» — добавьте заново.','ok');
+};
+async function sbLoadBg(){
+  try{
+    const list=await fetch(ORIGIN+'/api/backgrounds').then(r=>r.json());
+    $('bglib').innerHTML=list.length
+      ? list.map(b=>`<button data-b="${b.id}" title="${b.title}"><img src="${ORIGIN+b.preview}" alt="${b.title}" loading="lazy"></button>`).join('')
+      : '<p class="msg">Фонов пока нет</p>';
+  }catch{$('bglib').innerHTML='<p class="msg">Каталог фонов недоступен</p>'}
+}
+$('bglib').onclick=async e=>{
+  const b=e.target.closest('[data-b]');if(!b)return;
+  if(!confirm(`Фон «${b.title}» встанет на весь макет. Спишется ${PRICE.background} кр. Продолжить?`))return;
+  say($('sout'),'Загружаю фон…');
+  try{
+    const r=await fetch(ORIGIN+'/api/background-open',{method:'POST',headers:JSONH,body:JSON.stringify({email,item_id:b.dataset.b})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
+    setCredits(j.credits);
+    const img=new Image();
+    img.onload=()=>{SB.bgimg=img;$('bgclear').classList.remove('hide');sbDraw();say($('sout'),'Фон установлен.','ok')};
+    img.src=j.image;
+  }catch(x){say($('sout'),x.message,'err')}
+};
+$('bgclear').onclick=()=>{SB.bgimg=null;$('bgclear').classList.add('hide');sbDraw();say($('sout'),'Фон убран.')};
 $('slibsearch').oninput=e=>sbRenderLib(e.target.value.trim().toLowerCase());
 $('slib').onclick=async e=>{
   const b=e.target.closest('[data-u]');if(!b)return;
@@ -653,6 +1020,8 @@ $('slib').onclick=async e=>{
 };
 $('sfmt').onchange=()=>{$('scustom').classList.toggle('hide',$('sfmt').value!=='custom');sbFormat()};
 $('swmm').oninput=$('shmm').oninput=sbFormat;
+$('sshape').onchange=sbFormat;
+$('smode').onchange=e=>$('scopieswrap').classList.toggle('hide',e.target.value!=='many');
 $('sbg').oninput=e=>{SB.bg=e.target.value;sbDraw()};
 $('sown').onclick=()=>$('sownin').click();
 $('sownin').onchange=async e=>{for(const f of e.target.files)if(f.type.startsWith('image/'))sbAdd(await readFile(f),f.name);e.target.value=''};
@@ -707,6 +1076,7 @@ function sbRender300(){
   const px=Math.round(SB.w*11.811),py=Math.round(SB.h*11.811),k=px/bd.width;
   const c=document.createElement('canvas');c.width=px;c.height=py;
   const g=c.getContext('2d');g.fillStyle=SB.bg;g.fillRect(0,0,px,py);
+  if(SB.bgimg)drawCover(g,SB.bgimg,px,py);
   for(const o of SB.objs){
     if(!o.img.complete||!o.img.naturalWidth)continue;
     g.save();g.translate(o.x*k,o.y*k);g.rotate(o.rot*Math.PI/180);g.scale(o.flip?-1:1,1);
@@ -714,18 +1084,82 @@ function sbRender300(){
   }
   return c.toDataURL('image/png');
 }
+$('tosand').onclick=()=>{
+  if(!lastSrc)return;
+  $('tabs').querySelector('[data-tab=sand]').click();
+  sbAdd(lastSrc);say($('sout'),'Картинка добавлена в песочницу — расставьте и напечатайте.','ok');
+};
+$('again').onclick=()=>{if(lastAI)lastAI()};
+$('resclose').onclick=()=>$('resbox').classList.add('hide');
+/* ---- демо: система сама собирает пример макета, ничего не списывая ---- */
+let demoStop=false;
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function runDemo(){
+  demoStop=false;$('demo').classList.add('hide');$('demostop').classList.remove('hide');
+  const step=t=>say($('demomsg'),t,'ok');
+  try{
+    step('1/6. Открываю песочницу…');
+    $('tabs').querySelector('[data-tab=sand]').click();
+    if(!SB.lib.length){await sbLoadLib();await pause(600)}
+    if(demoStop)return;
+    step('2/6. Беру формат «Круг 16 см» — такой макет кладут на торт.');
+    $('sfmt').value='c160';sbFormat();await pause(1200);
+    if(demoStop)return;
+    step('3/6. Добавляю объекты из библиотеки…');
+    SB.objs=[];SB.sel=null;
+    const pick=['Мишка','Шар красный','Шар синий','Звезда золотая'];
+    const place=[[0.5,0.62,0.42],[0.24,0.36,0.17],[0.76,0.36,0.17],[0.3,0.82,0.12]];
+    for(let i=0;i<pick.length;i++){
+      if(demoStop)return;
+      const o=SB.lib.find(x=>x.title===pick[i])||SB.lib[i];
+      if(!o)continue;
+      sbAdd(await toData(ORIGIN+o.url));
+      await pause(500);
+      const s=SB.sel;if(!s)continue;
+      const k=(bd.width*place[i][2])/s.w;s.w*=k;s.h*=k;s.x=bd.width*place[i][0];s.y=bd.height*place[i][1];
+      sbDraw();await pause(400);
+    }
+    if(demoStop)return;
+    step('4/6. Добавляю надпись — буквы ровно такие, как введены.');
+    $('stext').value='Настя, 3 годика';$('sfont').value="'Comic Sans MS',cursive";$('scolor').value='#d6336c';
+    $('saddtext').click();await pause(700);
+    const t=SB.sel;
+    if(t){const k=(bd.width*0.62)/t.w;t.w*=k;t.h*=k;t.x=bd.width*0.5;t.y=bd.height*0.18;SB.sel=null;sbDraw()}
+    await pause(1000);
+    if(demoStop)return;
+    step('5/6. Любой объект можно двигать, крутить и менять размер — попробуйте мышью.');
+    await pause(1800);
+    if(demoStop)return;
+    step(`6/6. Готово. Осталось нажать «Скачать PDF за ${PRICE.pdf} кр.» — и макет можно печатать. Демо ничего не списало.`);
+  }finally{
+    $('demo').classList.remove('hide');$('demostop').classList.add('hide');
+  }
+}
+$('demo').onclick=runDemo;
+$('demostop').onclick=()=>{demoStop=true;say($('demomsg'),'Демо остановлено. Макет остался в песочнице — можете продолжить сами.')};
+$('senhance').onclick=()=>{
+  if(!SB.objs.length)return say($('sout'),'Сначала соберите макет.','err');
+  sendAI('enhance',[sbRender300()],PRICE.enhance,'ИИ улучшит собранный макет, сохранив композицию и надписи.',$('stext').value.trim());
+};
 $('sprint').onclick=async()=>{
   const out=$('sout');
   if(!SB.objs.length)return say(out,'Добавьте хотя бы один объект.','err');
   if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
   $('sprint').disabled=true;say(out,'Собираю PDF…');
   try{
-    const r=await fetch(ORIGIN+'/api/export-print',{method:'POST',headers:JSONH,
-      body:JSON.stringify({email,image_base64:sbRender300(),width_mm:SB.w,height_mm:SB.h,circle:SB.round})});
+    const img=sbRender300(),many=$('smode').value==='many',half=$('ssheet').value==='1';
+    const url=many?'/api/generate-pdf':'/api/export-print';
+    const body=many
+      ? {email,half_sheet:half,items:[{image_base64:img,type:SB.round?'diameter':'width',size:SB.w/10,
+          copies:+$('scopies').value||1,outline:0,circle:SB.round,raw:true}]}   // raw: готовый макет не обрезаем
+      : {email,image_base64:img,width_mm:SB.w,height_mm:SB.h,circle:SB.round,fmt:$('sfile').value,half_sheet:half};
+    const r=await fetch(ORIGIN+url,{method:'POST',headers:JSONH,body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
     setCredits(j.credits);out.className='msg ok';
-    out.innerHTML=`Готово. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+    const jpg=!many&&$('sfile').value==='jpg';
+    out.innerHTML=`Готово${jpg?'':`, листов: ${j.sheets_count}`}. <a href="${ORIGIN+j.download_url}" download>Скачать ${jpg?'JPG':'PDF'}</a>`
+      +`<br>Печатайте в масштабе 100%, не «по размеру страницы».`;
   }catch(x){say(out,x.message,'err')}
   $('sprint').disabled=false;
 };
