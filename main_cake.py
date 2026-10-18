@@ -37,6 +37,10 @@ GALLERY_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 OBJECTS_DIR = BASE_DIR / "objects"
 OBJECTS_DIR.mkdir(exist_ok=True)
 OBJECT_EXT = {".svg", ".png", ".webp"}
+# Каталог фонов для песочницы: картинки в папке backgrounds, названия — в backgrounds/titles.json
+BACKGROUNDS_DIR = BASE_DIR / "backgrounds"
+BACKGROUNDS_DIR.mkdir(exist_ok=True)
+HALF_SHEET_MM = 148.5                      # половина листа A4: кондитеры печатают на остатках
 
 app = FastAPI(title="NeiroYaga Vector Cake Editor & Layout A4")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -66,7 +70,7 @@ RETURN_URL = os.getenv("RETURN_URL", "https://babayagaland.ru/")
 
 SINGLE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
 # 1 кредит = 1 ₽. Каждый готовый результат платный; цены правятся ТОЛЬКО здесь.
-PRICES = {"pdf": 10, "ai": 50, "cut": 50, "bg": 50, "enhance": 50, "fix": 25}  # pdf — готовый PDF без ИИ (песочница и раскладка); остальное — работа ИИ
+PRICES = {"pdf": 10, "background": 3, "fix": 25, "ai": 50, "cut": 50, "bg": 50, "enhance": 50}  # pdf — готовый PDF без ИИ (песочница и раскладка); остальное — работа ИИ
 CREDIT_COST = PRICES["ai"]
 # Цену пакета задаёт СЕРВЕР. Раньше сумму и число кредитов присылал браузер,
 # и можно было купить 100000 кредитов за 1 ₽. ПОСТАВЬТЕ СВОИ ЦЕНЫ: {кредиты: рубли}.
@@ -241,6 +245,7 @@ class ItemConfig(BaseModel):
 class LayoutRequest(BaseModel):
     items: List[ItemConfig] = Field(min_length=1, max_length=50)
     email: str = Field(min_length=3, max_length=200)
+    half_sheet: bool = False               # печатать на половинках листа A4
 
 
 def cleanup_old_files():
@@ -251,7 +256,7 @@ def cleanup_old_files():
             f.unlink(missing_ok=True)
 
 
-def make_pdf(entries, prefix="layout"):
+def make_pdf(entries, prefix="layout", half=False):
     """entries: [(картинка base64, type, size_cm, copies, outline_mm, circle, raw)] -> (файл, число листов)"""
     cleanup_old_files()
     items = []
@@ -266,7 +271,8 @@ def make_pdf(entries, prefix="layout"):
                       "circle": bool(rest[1]) if len(rest) > 1 else False,
                       "raw": bool(rest[2]) if len(rest) > 2 else False})
     name = f"{prefix}_{os.urandom(8).hex()}.pdf"
-    return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name))
+    sheet = HALF_SHEET_MM if half else 297
+    return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
 
 
 async def paid_job(email: str, kind: str, fn, *args):
@@ -298,7 +304,7 @@ def config():
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
     entries = [(i.image_base64, i.type, i.size, i.copies, i.outline, i.circle, i.raw) for i in payload.items]
-    (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries)
+    (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries, "layout", payload.half_sheet)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
 
@@ -344,6 +350,54 @@ def object_file(name: str):
         raise HTTPException(status_code=404, detail="Объект не найден")
     mime = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp"}[path.suffix.lower()]
     return FileResponse(path, media_type=mime)
+
+
+@app.get("/api/backgrounds")
+def backgrounds_list():
+    """Фоны для песочницы: картинки в папке backgrounds, названия — из titles.json."""
+    names = titles_of(BACKGROUNDS_DIR)
+    files = sorted((f for f in BACKGROUNDS_DIR.iterdir() if f.suffix.lower() in GALLERY_EXT), key=lambda f: f.name.lower())
+    return [{"id": f.stem, "title": names.get(f.name, f.stem.replace("-", " ")),
+             "preview": f"/api/background-preview/{f.stem}"} for f in files]
+
+
+def background_file(item_id: str) -> Path:
+    for f in BACKGROUNDS_DIR.iterdir():
+        if f.stem == item_id and f.suffix.lower() in GALLERY_EXT:
+            return f
+    raise HTTPException(status_code=404, detail="Фон не найден")
+
+
+@app.get("/api/background-preview/{item_id}")
+def background_preview(item_id: str):
+    """Мелкое превью: по нему выбирают, но печатать его нельзя."""
+    src = background_file(item_id)
+    out = OUTPUT_DIR / f"bgprev_{item_id}.png"
+    if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+        img = Image.open(src).convert("RGB")
+        img.thumbnail((360, 360), Image.Resampling.LANCZOS)
+        img.save(out, "PNG")
+    return FileResponse(out, media_type="image/png")
+
+
+def background_image(item_id: str, side: int = 2400) -> str:
+    img = Image.open(background_file(item_id)).convert("RGB")
+    img.thumbnail((side, side), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+class BackgroundBuy(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    item_id: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/background-open")   # фон из каталога в песочницу (платно)
+async def background_open(p: BackgroundBuy):
+    background_file(p.item_id)
+    img, credits = await paid_job(p.email, "background", background_image, p.item_id)
+    return {"success": True, "image": img, "credits": credits}
 
 
 @app.get("/api/gallery")
@@ -431,6 +485,8 @@ class ExactRequest(BaseModel):
     width_mm: float = Field(gt=10, le=210)
     height_mm: float = Field(gt=10, le=297)
     circle: bool = False
+    fmt: Literal["pdf", "jpg"] = "pdf"      # PDF для печати или JPG-картинка 300 DPI
+    half_sheet: bool = False
 
 
 def make_exact(p: ExactRequest) -> str:
@@ -440,9 +496,14 @@ def make_exact(p: ExactRequest) -> str:
         img.load()
     except Exception:
         raise ValueError("Не удалось прочитать изображение")
-    name = f"layout_{os.urandom(8).hex()}.pdf"
+    name = f"layout_{os.urandom(8).hex()}.{p.fmt}"
     h = p.width_mm if p.circle else p.height_mm
-    A4LayoutEngine().export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name))
+    engine = A4LayoutEngine()
+    if p.fmt == "jpg":                      # картинка точного размера, без листа
+        engine.export_jpg(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name))
+    else:
+        engine.export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name),
+                            sheet_h_mm=HALF_SHEET_MM if p.half_sheet else 297)
     return name
 
 
@@ -455,11 +516,13 @@ async def export_print(p: ExactRequest):
 @app.get("/api/download/{filename}")
 def download_pdf(filename: str):
     # Раньше отдавался ЛЮБОЙ файл рядом с кодом, включая .env с ключами.
-    if not re.fullmatch(r"(?:layout|order)_[0-9a-f]{16}\.pdf", filename):
+    if not re.fullmatch(r"(?:layout|order)_[0-9a-f]{16}\.(?:pdf|jpg)", filename):
         raise HTTPException(status_code=404, detail="Файл не найден")
     path = OUTPUT_DIR / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Файл устарел — соберите макет заново")
+    if path.suffix == ".jpg":
+        return FileResponse(path, media_type="image/jpeg", filename="sugar_print_layout.jpg")
     return FileResponse(path, media_type="application/pdf", filename="sugar_print_layout.pdf")
 
 
