@@ -395,10 +395,34 @@ def make_gallery_pdf(p: GalleryBuy) -> str:
     return name
 
 
+def gallery_image(item_id: str, side: int = 2000) -> str:
+    """Чистая картинка макета (без водяного знака) для песочницы."""
+    img = Image.open(gallery_file(item_id))
+    img.load()
+    img.thumbnail((side, side), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.convert("RGBA").save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+class GalleryOpen(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    item_id: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/gallery-open")   # открыть купленный макет в песочнице (платно, как PDF)
+async def gallery_open(p: GalleryOpen):
+    gallery_file(p.item_id)                      # проверяем, что такой макет есть
+    img, credits = await paid_job(p.email, "pdf", gallery_image, p.item_id)
+    return {"success": True, "image": img, "credits": credits}
+
+
 @app.post("/api/gallery-buy")   # готовый макет из галереи (платно)
 async def gallery_buy(p: GalleryBuy):
     name, credits = await paid_job(p.email, "pdf", make_gallery_pdf, p)
-    return {"success": True, "sheets_count": 1, "download_url": f"/api/download/{name}", "credits": credits}
+    # отдаём и саму картинку: купленный макет можно сразу открыть в песочнице и доработать
+    return {"success": True, "sheets_count": 1, "download_url": f"/api/download/{name}",
+            "credits": credits, "image": gallery_image(p.item_id)}
 
 
 class ExactRequest(BaseModel):
