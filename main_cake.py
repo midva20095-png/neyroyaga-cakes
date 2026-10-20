@@ -499,11 +499,11 @@ def make_exact(p: ExactRequest) -> str:
     name = f"layout_{os.urandom(8).hex()}.{p.fmt}"
     h = p.width_mm if p.circle else p.height_mm
     engine = A4LayoutEngine()
-    if p.fmt == "jpg":                      # картинка точного размера, без листа
-        engine.export_jpg(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name))
+    sheet = HALF_SHEET_MM if p.half_sheet else 297
+    if p.fmt == "jpg":                      # тот же лист, только картинкой
+        engine.export_jpg(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
     else:
-        engine.export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name),
-                            sheet_h_mm=HALF_SHEET_MM if p.half_sheet else 297)
+        engine.export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
     return name
 
 

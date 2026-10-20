@@ -333,13 +333,30 @@ class A4LayoutEngine:
         out.alpha_composite(img.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
         return out
 
-    def export_jpg(self, img, w_mm, h_mm, circle, output_path, dpi=DPI):
-        """Макет точного размера в JPG 300 DPI — для печати без PDF."""
+    def export_jpg(self, img, w_mm, h_mm, circle, output_path, sheet_h_mm=PAGE_H_MM, dpi=DPI):
+        """Лист для печати в JPG 300 DPI: макет точного размера по центру листа —
+        то же, что и PDF, только картинкой. Круг остаётся кругом, лишнего не добавляем."""
+        if w_mm > PAGE_W_MM or h_mm > sheet_h_mm:
+            raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на лист "
+                             f"{PAGE_W_MM:g}×{sheet_h_mm:g} мм")
         fitted = self.fit_exact(img, w_mm, h_mm, circle)
-        flat = Image.new("RGB", fitted.size, (255, 255, 255))
-        flat.paste(fitted, mask=fitted.getchannel("A"))
-        flat.save(output_path, "JPEG", quality=95, dpi=(dpi, dpi))
+        sheet = Image.new("RGB", (round(PAGE_W_MM * MM_PX), round(sheet_h_mm * MM_PX)), (255, 255, 255))
+        sheet.paste(fitted, ((sheet.width - fitted.width) // 2, (sheet.height - fitted.height) // 2),
+                    fitted.getchannel("A"))
+        self._draw_marks_image(sheet)
+        sheet.save(output_path, "JPEG", quality=95, dpi=(dpi, dpi))
         return 1
+
+    @staticmethod
+    def _draw_marks_image(sheet):
+        """Линейка 100 мм внизу листа — чтобы проверить масштаб печати, как в PDF."""
+        d = ImageDraw.Draw(sheet)
+        y = sheet.height - round(8 * MM_PX)
+        x0 = round(MARGIN_MM * MM_PX)
+        d.line([(x0, y), (x0 + round(100 * MM_PX), y)], fill=(120, 120, 120), width=3)
+        for i in range(11):
+            x = x0 + round(i * 10 * MM_PX)
+            d.line([(x, y), (x, y - round((2 if i % 5 == 0 else 1.2) * MM_PX))], fill=(120, 120, 120), width=3)
 
     def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path, sheet_h_mm=PAGE_H_MM):
         """Один макет точного размера (в мм) по центру A4. Круг — с круглой обрезкой, остальное — вписывается без искажений."""

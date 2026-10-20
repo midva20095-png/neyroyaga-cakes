@@ -92,6 +92,7 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
 <div id="app" class="hide">
   <header>
     <h1>НейроЯга</h1><span class="grow"></span>
+    <button id="helpbtn" class="ghost">📖 Инструкция</button>
     <span id="credits" class="pill" title="Баланс: 1 кредит = 1 ₽">… кр.</span>
     <button id="topup" class="main">Пополнить</button>
     <button id="logout" class="ghost">Выйти</button>
@@ -236,7 +237,13 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <button id="bgclear" class="ghost hide">Убрать фон</button>
         <label>Библиотека объектов</label>
         <input id="slibsearch" placeholder="Поиск: шар, цифра, торт…">
+        <div class="f2">
+          <label>Категория<select id="slibcat"><option value="">Все категории</option></select></label>
+          <label>Размер картинок<input id="slibsize" type="range" min="56" max="160" value="74"></label>
+        </div>
         <div id="slib" class="lib"></div>
+        <p id="slibcount" class="msg"></p>
+        <button id="slibbig" class="ghost">Развернуть список</button>
       </div>
 
       <div id="t-help" class="hide">
@@ -312,6 +319,13 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
     <section id="sandpanel" class="paper hide">
       <div class="bar"><h2 class="grow">Сборка макета</h2><span id="sinfo" class="msg"></span></div>
       <div id="boardwrap"><canvas id="board"></canvas></div>
+      <div class="bar" style="margin-top:10px">
+        <b style="font-size:13px">Полка деталей</b>
+        <label style="display:flex;gap:6px;align-items:center;font-weight:600">
+          <input id="toshelf" type="checkbox" style="width:auto"> класть выбранное на полку, а не сразу в макет
+        </label>
+      </div>
+      <div id="shelf" class="regs"></div>
       <div class="sbrow">
         <button id="sup" class="ghost">Выше</button>
         <button id="sdown" class="ghost">Ниже</button>
@@ -328,6 +342,11 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <button id="senhance" class="ghost"></button>
         <span class="msg grow">ИИ аккуратно улучшит качество макета, сохранив композицию и надписи.</span>
       </div>
+      <div class="sbrow">
+        <button id="setadd" class="ghost">Добавить текущий макет в набор</button>
+        <button id="setprint" class="main hide"></button>
+      </div>
+      <div id="setlist" class="regs"></div>
       <div class="bar"><span id="shint" class="grow msg">Перетаскивайте объекты мышью или пальцем. Угол выделения тянет размер.</span>
         <button id="sprint" class="main"></button></div>
       <p id="sout" class="msg" aria-live="polite"></p>
@@ -413,6 +432,7 @@ function labels(){
   $('p-bg2').textContent=PRICE.background;
   $('senhance').textContent=busy?'Улучшаю…':`✨ Улучшить макет ИИ за ${PRICE.enhance} кр.`;
   $('p-bgr').textContent=PRICE.background;
+  if(typeof setDraw==='function'){setDraw();shelfDraw()}
 }
 
 /* ---- вход ---- */
@@ -802,6 +822,10 @@ async function openTopup(){
   $('packs').innerHTML=p.map(x=>`<button class="main" data-c="${x.credits}">${x.credits} кр. за ${x.amount} ₽</button>`).join('')||'Пакеты недоступны.';
   say($('pmsg'),'');$('dlg').showModal();
 }
+$('helpbtn').onclick=()=>{                       // кнопка в шапке открывает вкладку с инструкцией
+  $('tabs').querySelector('[data-tab=help]').click();
+  $('t-help').scrollIntoView({behavior:'smooth',block:'start'});
+};
 $('topup').onclick=openTopup;
 $('packs').onclick=async e=>{
   const c=e.target.dataset.c;if(!c)return;say($('pmsg'),'Создаю платёж…');
@@ -932,14 +956,36 @@ async function toData(url){                      // через fetch, иначе
 async function sbLoadLib(){
   try{
     SB.lib=await fetch(ORIGIN+'/api/objects').then(r=>r.json());
-    sbRenderLib('');
+    sbLibCats();sbRenderLib('');
   }catch{say($('sout'),'Библиотека объектов недоступна','err')}
 }
 function sbRenderLib(q){
-  const list=SB.lib.filter(o=>!q||o.title.toLowerCase().includes(q));
+  const cat=$('slibcat').value;
+  const list=SB.lib.filter(o=>(!q||o.title.toLowerCase().includes(q))&&(!cat||o.group===cat));
   $('slib').innerHTML=list.map(o=>`<button data-u="${o.url}" title="${o.title}"><img src="${ORIGIN+o.url}" alt="${o.title}" loading="lazy"></button>`).join('')
     ||'<p class="msg">Ничего не найдено</p>';
+  $('slibcount').textContent=list.length?`Показано: ${list.length} из ${SB.lib.length}`:'';
+  sbLibSize();
 }
+function sbLibSize(){                                   // размер плиток задаётся ползунком
+  const s=+$('slibsize').value;
+  for(const el of [$('slib'),$('bglib')]){              // id передаём элементами: сборщик Tilda их переименует
+    el.style.gridTemplateColumns=`repeat(auto-fill,minmax(${s}px,1fr))`;
+    el.querySelectorAll('button').forEach(b=>b.style.height=s+'px');
+  }
+}
+function sbLibCats(){                                   // категории: первое слово названия
+  const cats=[...new Set(SB.lib.map(o=>o.group))].sort((a,b)=>a.localeCompare(b,'ru'));
+  $('slibcat').innerHTML='<option value="">Все категории</option>'
+    +cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+$('slibsize').oninput=sbLibSize;
+$('slibcat').onchange=()=>sbRenderLib($('slibsearch').value.trim().toLowerCase());
+$('slibbig').onclick=()=>{
+  const big=$('slib').style.maxHeight==='70vh';
+  $('slib').style.maxHeight=big?'':'70vh';
+  $('slibbig').textContent=big?'Развернуть список':'Свернуть список';
+};
 function drawText(g,t,font,color,size){                 // цветная буква с белым кантом
   g.font=`bold ${size}px ${font}`;g.textBaseline='middle';g.textAlign='center';
   g.lineWidth=size*0.14;g.strokeStyle='#fff';g.lineJoin='round';
@@ -996,6 +1042,7 @@ async function sbLoadBg(){
     $('bglib').innerHTML=list.length
       ? list.map(b=>`<button data-b="${b.id}" title="${b.title}"><img src="${ORIGIN+b.preview}" alt="${b.title}" loading="lazy"></button>`).join('')
       : '<p class="msg">Фонов пока нет</p>';
+    sbLibSize();
   }catch{$('bglib').innerHTML='<p class="msg">Каталог фонов недоступен</p>'}
 }
 $('bglib').onclick=async e=>{
@@ -1016,7 +1063,61 @@ $('bgclear').onclick=()=>{SB.bgimg=null;$('bgclear').classList.add('hide');sbDra
 $('slibsearch').oninput=e=>sbRenderLib(e.target.value.trim().toLowerCase());
 $('slib').onclick=async e=>{
   const b=e.target.closest('[data-u]');if(!b)return;
-  sbAdd(await toData(ORIGIN+b.dataset.u));
+  const src=await toData(ORIGIN+b.dataset.u);
+  if($('toshelf').checked)shelfAdd(src,b.title);else sbAdd(src,b.title);
+};
+/* ---- полка: временное место для деталей, чтобы не мешали на макете ---- */
+let shelf=[];
+function shelfDraw(){
+  $('shelf').innerHTML=shelf.length
+    ? shelf.map((s,i)=>`<div class="chip"><img src="${s.src}" alt=""><span>${s.title||'Деталь'}</span>`
+        +`<button class="ghost" data-put="${i}">на макет</button><button class="ghost" data-del="${i}">✕</button></div>`).join('')
+    : '<p class="msg">Полка пуста. Выбранные объекты будут собираться здесь.</p>';
+}
+function shelfAdd(src,title){shelf.push({src,title});shelfDraw();say($('sout'),'Деталь на полке — нажмите «на макет», когда понадобится.','ok')}
+$('shelf').onclick=e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.put!==undefined){const s=shelf[+b.dataset.put];sbAdd(s.src,s.title);return}
+  shelf.splice(+b.dataset.del,1);shelfDraw();
+};
+/* ---- набор макетов: для каждого кружка свой рисунок ---- */
+let mset=[];
+function setDraw(){
+  $('setlist').innerHTML=mset.map((m,i)=>`<div class="chip"><img src="${m.src}" alt=""><span>Макет ${i+1}: ${m.w}×${m.h} мм</span>`
+    +`<label style="font-weight:600">шт.<input type="number" min="1" max="100" value="${m.copies}" data-n="${i}" style="width:70px"></label>`
+    +`<button class="ghost" data-x="${i}">✕</button></div>`).join('');
+  const n=mset.reduce((s,m)=>s+(+m.copies||0),0);
+  $('setprint').classList.toggle('hide',!mset.length);
+  $('setprint').textContent=`Напечатать набор: ${n} шт. за ${PRICE.pdf} кр.`;
+}
+$('setadd').onclick=()=>{
+  if(!SB.objs.length)return say($('sout'),'Сначала соберите макет.','err');
+  mset.push({src:sbRender300(),w:SB.w,h:SB.h,round:SB.round,copies:1});setDraw();
+  say($('sout'),`Макет добавлен в набор (всего ${mset.length}). Соберите следующий и добавьте его тоже.`,'ok');
+};
+$('setlist').addEventListener('input',e=>{
+  const i=e.target.dataset.n;if(i===undefined)return;
+  mset[+i].copies=Math.max(1,Math.min(100,+e.target.value||1));setDraw();
+});
+$('setlist').addEventListener('click',e=>{
+  const b=e.target.closest('[data-x]');if(!b)return;mset.splice(+b.dataset.x,1);setDraw();
+});
+$('setprint').onclick=async()=>{
+  const out=$('sout');
+  if(!confirm(`Все макеты набора разложатся по листам. Спишется ${PRICE.pdf} кр. Продолжить?`))return;
+  $('setprint').disabled=true;say(out,'Собираю набор…');
+  try{
+    const body={email,half_sheet:$('ssheet').value==='1',items:mset.map(m=>({
+      image_base64:m.src,type:m.round?'diameter':'width',size:m.w/10,copies:+m.copies||1,
+      outline:0,circle:m.round,raw:true}))};
+    const r=await fetch(ORIGIN+'/api/generate-pdf',{method:'POST',headers:JSONH,body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
+    setCredits(j.credits);out.className='msg ok';
+    out.innerHTML=`Готово, листов: ${j.sheets_count}. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a>`
+      +`<br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+  }catch(x){say(out,x.message,'err')}
+  $('setprint').disabled=false;
 };
 $('sfmt').onchange=()=>{$('scustom').classList.toggle('hide',$('sfmt').value!=='custom');sbFormat()};
 $('swmm').oninput=$('shmm').oninput=sbFormat;
