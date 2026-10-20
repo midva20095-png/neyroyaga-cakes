@@ -446,21 +446,41 @@ class GalleryBuy(BaseModel):
     height_mm: float = Field(gt=10, le=297)
     circle: bool = False
     copies: int = Field(default=1, ge=1, le=100)
+    fmt: Literal["pdf", "jpg"] = "pdf"
+    half_sheet: bool = False
 
 
-def make_gallery_pdf(p: GalleryBuy) -> str:
+def make_gallery_pdf(p: GalleryBuy):
+    """Готовый макет из галереи в нужном размере: PDF или JPG, целый лист или половина."""
     cleanup_old_files()
     img = Image.open(gallery_file(p.item_id))
     img.load()
-    name = f"layout_{os.urandom(8).hex()}.pdf"
+    stem = f"layout_{os.urandom(8).hex()}"
+    sheet = HALF_SHEET_MM if p.half_sheet else 297
     engine = A4LayoutEngine()
+    h_mm = p.width_mm if p.circle else p.height_mm
     if p.copies > 1:                      # несколько штук — раскладываем на листы как наклейки
-        engine.generate_pdf([{"image": img, "type": "diameter" if p.circle else "width",
-                              "size": p.width_mm / 10, "copies": p.copies,
-                              "outline": 2.5, "circle": p.circle}], str(OUTPUT_DIR / name))
+        items = [{"image": img, "type": "diameter" if p.circle else "width",
+                  "size": p.width_mm / 10, "copies": p.copies, "outline": 2.5, "circle": p.circle}]
+        if p.fmt == "jpg":
+            paths = engine.generate_images(items, str(OUTPUT_DIR), stem, sheet_h_mm=sheet)
+            if len(paths) == 1:
+                return Path(paths[0]).name, 1
+            zip_name = f"{stem}.zip"
+            with zipfile.ZipFile(OUTPUT_DIR / zip_name, "w", zipfile.ZIP_DEFLATED) as z:
+                for i, path in enumerate(paths, 1):
+                    z.write(path, f"list_{i}.jpg")
+                    Path(path).unlink(missing_ok=True)
+            return zip_name, len(paths)
+        name = f"{stem}.pdf"
+        return name, engine.generate_pdf(items, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+    if p.fmt == "jpg":
+        name = f"{stem}.jpg"
+        engine.export_jpg(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
     else:
-        engine.export_exact(img, p.width_mm, p.width_mm if p.circle else p.height_mm, p.circle, str(OUTPUT_DIR / name))
-    return name
+        name = f"{stem}.pdf"
+        engine.export_exact(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+    return name, 1
 
 
 def gallery_image(item_id: str, side: int = 2000) -> str:
@@ -487,9 +507,9 @@ async def gallery_open(p: GalleryOpen):
 
 @app.post("/api/gallery-buy")   # готовый макет из галереи (платно)
 async def gallery_buy(p: GalleryBuy):
-    name, credits = await paid_job(p.email, "pdf", make_gallery_pdf, p)
+    (name, sheets), credits = await paid_job(p.email, "pdf", make_gallery_pdf, p)
     # отдаём и саму картинку: купленный макет можно сразу открыть в песочнице и доработать
-    return {"success": True, "sheets_count": 1, "download_url": f"/api/download/{name}",
+    return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}",
             "credits": credits, "image": gallery_image(p.item_id)}
 
 

@@ -57,6 +57,11 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
 .gi img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px;pointer-events:none}
 .gi b{display:block;font-size:12px;margin-top:6px;font-weight:600}
 #galwrap{max-width:1120px;margin:0 auto 24px;padding:0 16px}
+.gi .gbtns{display:flex;gap:6px;margin-top:8px}
+.gi .gbtns button{flex:1;padding:7px 4px;font-size:12px}
+.gi b{display:block;font-size:12px;margin-top:6px}
+#gdlg{width:min(460px,94vw)}
+#gdprev{max-height:260px}
 .help h3{margin:16px 0 4px;font-size:15px}
 .help p,.help ul{margin:4px 0;font-size:14px;line-height:1.55}
 .help ul{padding-left:20px}
@@ -289,13 +294,19 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
 
           <h3>🧩 Песочница — сборка макета</h3>
           <p>Выберите формат: круг 16 или 20 см, лист из 12 топперов по 6 см, квадрат, A5, A4 или свой размер. Добавьте объекты из библиотеки, свои картинки или результаты ИИ. Объекты двигаются мышью и пальцем, угол выделения тянет размер, есть поворот, отражение, копия и слои. Надпись добавляется с выбором шрифта и цвета.</p>
-          <p>Печать двумя способами: один макет по центру листа A4 или несколько копий, разложенных по листам.</p>
+          <p>Печать тремя способами: один макет по центру листа, несколько копий одного макета или набор из разных макетов. Для набора соберите первый макет, нажмите «Добавить текущий макет в набор», очистите холст, соберите второй и добавьте его тоже. У каждого задаётся количество. Так делается лист капкейков с разными картинками.</p>
+          <p>Надпись правится прямо на макете: щёлкните по ней, и под холстом появится строка с текстом, формой (прямая или дуга), изгибом дуги и цветом.</p>
+          <p>Полка деталей: включите галочку «класть выбранное на полку», и объекты из библиотеки будут собираться списком под холстом, а не ложиться сразу на макет. Кнопка «на макет» переносит нужное.</p>
 
           <h3>🖨 Печать и раскладка</h3>
           <p>Каждой картинке задаются свои размер, количество, обводка (белый кант 2.5 мм под ножницы) и форма — по контуру или круг. Режимы: набор наклеек, сетка под капкейки и один макет точного размера.</p>
 
-          <h3>🛒 Галерея</h3>
-          <p>Готовые макеты. На превью стоит водяной знак, в купленном PDF его нет. Выберите формат и количество и скачайте PDF.</p>
+          <h3>🛒 Галерея готовых макетов</h3>
+          <p>Внизу страницы. У каждого макета две кнопки. «🖨 Печать» открывает окно, где задаются размер (круг 20, 16, 6 см или свой), количество, файл (PDF или JPG) и лист (целый A4 или половина). «🧩 В песочницу» кладёт макет на холст, чтобы добавить надпись или объекты и напечатать своё. Любое из двух действий стоит столько же, сколько готовый файл. На превью водяной знак, в купленном файле его нет. Есть поиск по названию и ползунок размера карточек.</p>
+
+          <h3>🖨 Формат файла и лист</h3>
+          <p>PDF подходит для печати из любой программы. JPG — та же страница картинкой в 300 DPI, удобно для телефона и чужого компьютера. Если листов получается несколько, JPG приходит архивом: внутри отдельная картинка на каждый лист.</p>
+          <p>Лист бывает целый A4 (210×297 мм) и половина (210×148 мм). Половина нужна, чтобы печатать на остатках дорогой сахарной бумаги. Макет выше 148 мм на половину не помещается, сервис об этом предупредит.</p>
 
           <h3>Как печатать</h3>
           <p>Печатайте в масштабе 100% («Фактический размер»), не «по размеру страницы», иначе сантиметры уедут. На каждом листе внизу есть линейка 100 мм — приложите к распечатке и проверьте.</p>
@@ -386,26 +397,38 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
   </main>
   <div id="galwrap">
     <section class="paper">
-      <h2>Галерея готовых макетов</h2>
+      <div class="bar"><h2 class="grow">Галерея готовых макетов</h2><span id="galcount" class="msg"></span></div>
       <p id="galmsg" class="msg">Загружаю…</p>
-      <div id="gal" class="gal"></div>
-      <div id="galbuy" class="hide">
-        <div class="f2">
-          <label>Формат
-            <select id="gfmt"><option value="c200">Круг 20 см</option><option value="c160">Круг 16 см</option><option value="c60">Круг 6 см (капкейки)</option><option value="custom">Свой размер, мм</option></select>
-          </label>
-          <label>Количество<input id="gcopies" type="number" value="1" min="1" max="100"></label>
-        </div>
-        <div id="gcustom" class="f2 hide"><label>Ширина, мм<input id="gw" type="number" value="150" min="11" max="210"></label><label>Высота, мм<input id="gh" type="number" value="150" min="11" max="297"></label></div>
-        <div class="bar" style="margin-top:12px"><span id="galpick" class="grow msg"></span>
-          <button id="gsand" class="ghost"></button>
-          <button id="gbuy" class="main"></button></div>
-        <p id="galout" class="msg" aria-live="polite"></p>
-        <button id="gsand2" class="ghost hide">Открыть купленный макет в песочнице (бесплатно)</button>
+      <div class="f2">
+        <label>Поиск<input id="galsearch" placeholder="Имя, тема, праздник…"></label>
+        <label>Размер карточек<input id="galsize" type="range" min="130" max="320" value="190"></label>
       </div>
+      <div id="gal" class="gal"></div>
     </section>
   </div>
-</div>
+
+<dialog id="gdlg">
+  <h2 id="gdname">Макет</h2>
+  <img id="gdprev" class="thumb" alt="">
+  <div class="f2" style="margin-top:10px">
+    <label>Формат
+      <select id="gfmt"><option value="c200">Круг 20 см</option><option value="c160">Круг 16 см</option><option value="c60">Круг 6 см (капкейки)</option><option value="custom">Свой размер, мм</option></select>
+    </label>
+    <label>Количество<input id="gcopies" type="number" value="1" min="1" max="100"></label>
+  </div>
+  <div id="gcustom" class="f2 hide"><label>Ширина, мм<input id="gw" type="number" value="150" min="11" max="210"></label><label>Высота, мм<input id="gh" type="number" value="150" min="11" max="297"></label></div>
+  <div class="f2">
+    <label>Файл<select id="gfile"><option value="pdf">PDF</option><option value="jpg">JPG 300 DPI</option></select></label>
+    <label>Лист<select id="gsheet"><option value="0">Целый A4</option><option value="1">Половина A4</option></select></label>
+  </div>
+  <div class="sbrow">
+    <button id="gbuy" class="main"></button>
+    <button id="gsand" class="ghost"></button>
+  </div>
+  <p id="galout" class="msg" aria-live="polite"></p>
+  <button id="gsand2" class="ghost hide">Открыть купленный макет в песочнице (бесплатно)</button>
+  <button class="ghost" id="gdclose" style="margin-top:10px">Закрыть</button>
+</dialog>
 
 <dialog id="dlg">
   <h2>Пополнить кредиты</h2>
@@ -431,7 +454,8 @@ const shrink=(url,max=1024)=>new Promise(res=>{const i=new Image();i.onload=()=>
   c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.88))};i.src=url});
 const err=j=>{const d=j&&j.detail;return typeof d==='string'?d:(d&&d[0]&&d[0].msg)||'Ошибка сервера'};
 function labels(){
-  $('build').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('pp').textContent=PRICE.pdf;$('gbuy').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('gsand').textContent=`Открыть в песочнице за ${PRICE.pdf} кр.`;
+  $('build').textContent=`Скачать PDF за ${PRICE.pdf} кр.`;$('pp').textContent=PRICE.pdf;
+  $('gbuy').textContent=`Скачать за ${PRICE.pdf} кр.`;$('gsand').textContent=`В песочницу за ${PRICE.pdf} кр.`;$('gsand').textContent=`Открыть в песочнице за ${PRICE.pdf} кр.`;
   $('cut').textContent=busy?'Работаю…':`Вырезать объект за ${PRICE.cut} кр.`;
   $('bggo').textContent=busy?'Работаю…':`Заменить фон за ${PRICE.bg} кр.`;
   $('gen').textContent=busy?'Рисую…':`Нарисовать за ${PRICE.ai} кр.`;
@@ -843,26 +867,47 @@ $('packs').onclick=async e=>{
     if(j.success&&j.confirmation_url)location.href=j.confirmation_url;else say($('pmsg'),j.error||'Не удалось создать платёж.','err');
   }catch{say($('pmsg'),'Сервер недоступен.','err')}
 };
-/* ---- галерея готовых макетов ---- */
-let gsel=null;
+/* ---- галерея готовых макетов: карточки с кнопками ---- */
+let gsel=null,glist=[],bought=null;
 async function loadGallery(){
   try{
-    const list=await fetch(ORIGIN+'/api/gallery').then(r=>r.json());
-    if(!list.length)return say($('galmsg'),'Готовые макеты скоро появятся.');
-    say($('galmsg'),`Выберите макет, задайте размер и скачайте PDF за ${PRICE.pdf} кр. На превью стоит водяной знак, в PDF его нет.`);
-    $('gal').innerHTML=list.map(g=>`<div class="gi" data-id="${g.id}"><img src="${ORIGIN+g.preview}" alt="${g.title}" loading="lazy"><b>${g.title}</b></div>`).join('');
+    glist=await fetch(ORIGIN+'/api/gallery').then(r=>r.json());
+    if(!glist.length)return say($('galmsg'),'Готовые макеты скоро появятся.');
+    say($('galmsg'),`Выберите макет: его можно сразу напечатать в нужном размере или открыть в песочнице и доработать. Любое действие стоит ${PRICE.pdf} кр. На превью водяной знак, в файле его нет.`);
+    galRender('');
   }catch{say($('galmsg'),'Не удалось загрузить галерею.','err')}
 }
+function galRender(q){
+  const list=glist.filter(g=>!q||g.title.toLowerCase().includes(q));
+  $('gal').innerHTML=list.map(g=>`<div class="gi" data-id="${g.id}">
+      <img src="${ORIGIN+g.preview}" alt="${g.title}" loading="lazy"><b>${g.title}</b>
+      <div class="gbtns">
+        <button class="main" data-print="${g.id}">🖨 Печать</button>
+        <button class="ghost" data-sand="${g.id}">🧩 В песочницу</button>
+      </div></div>`).join('')||'<p class="msg">Ничего не найдено</p>';
+  $('galcount').textContent=`Макетов: ${list.length}`;
+  galSize();
+}
+function galSize(){
+  const s=+$('galsize').value;
+  $('gal').style.gridTemplateColumns=`repeat(auto-fill,minmax(${s}px,1fr))`;
+}
+$('galsize').oninput=galSize;
+$('galsearch').oninput=e=>galRender(e.target.value.trim().toLowerCase());
 $('gal').onclick=e=>{
-  const c=e.target.closest('.gi');if(!c)return;
-  gsel=c.dataset.id;
-  $('gal').querySelectorAll('.gi').forEach(x=>x.classList.toggle('sel',x===c));
-  $('galbuy').classList.remove('hide');
-  $('galpick').textContent='Выбрано: '+c.querySelector('b').textContent;
+  const p=e.target.closest('[data-print]'),s=e.target.closest('[data-sand]');
+  if(p){galOpenDialog(p.dataset.print);return}
+  if(s){gsel=s.dataset.sand;galToSandbox();return}
 };
+function galOpenDialog(id){
+  gsel=id;const g=glist.find(x=>x.id===id);if(!g)return;
+  $('gdname').textContent=g.title;$('gdprev').src=ORIGIN+g.preview;
+  say($('galout'),'');$('gsand2').classList.add('hide');$('gdlg').showModal();
+}
+$('gdclose').onclick=()=>$('gdlg').close();
 $('gfmt').onchange=e=>$('gcustom').classList.toggle('hide',e.target.value!=='custom');
-let bought=null;
 function toSandbox(src,msg){
+  $('gdlg').close();
   $('tabs').querySelector('[data-tab=sand]').click();
   $('sfmt').value='c200';sbFormat();                 // макеты из галереи обычно круглые
   sbAdd(src);
@@ -870,10 +915,10 @@ function toSandbox(src,msg){
   say($('sout'),msg,'ok');
 }
 $('gsand2').onclick=()=>{if(bought)toSandbox(bought,'Макет открыт в песочнице: добавьте надпись или объекты и печатайте.')};
-$('gsand').onclick=async()=>{
-  const out=$('galout');if(!gsel)return say(out,'Сначала выберите макет.','err');
+async function galToSandbox(){
+  const out=$('galout');
   if(!confirm(`Макет откроется в песочнице для доработки. Спишется ${PRICE.pdf} кр. Продолжить?`))return;
-  $('gsand').disabled=true;say(out,'Открываю макет…');
+  say(out,'Открываю макет…');
   try{
     const r=await fetch(ORIGIN+'/api/gallery-open',{method:'POST',headers:JSONH,body:JSON.stringify({email,item_id:gsel})});
     const j=await r.json().catch(()=>({}));
@@ -881,22 +926,28 @@ $('gsand').onclick=async()=>{
     setCredits(j.credits);bought=j.image;say(out,'');
     toSandbox(j.image,'Макет из галереи открыт. Добавьте надпись, объекты и печатайте.');
   }catch(x){say(out,x.message,'err')}
-  $('gsand').disabled=false;
-};
+}
+$('gsand').onclick=galToSandbox;
 $('gbuy').onclick=async()=>{
   const out=$('galout');if(!gsel)return say(out,'Сначала выберите макет.','err');
   const f=$('gfmt').value;
   const [w,h,circle]={c200:[200,200,true],c160:[160,160,true],c60:[60,60,true]}[f]||[+$('gw').value,+$('gh').value,false];
-  if(!(w>10&&w<=210&&h>10&&h<=297))return say(out,'Размер должен помещаться на A4: до 210×297 мм.','err');
-  if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
-  $('gbuy').disabled=true;say(out,'Готовлю PDF…');
+  const half=$('gsheet').value==='1';
+  if(!(w>10&&w<=210&&h>10&&h<=(half?148:297)))
+    return say(out,`Размер должен помещаться на лист: до 210×${half?148:297} мм.`,'err');
+  if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый файл. Продолжить?`))return;
+  $('gbuy').disabled=true;say(out,'Готовлю файл…');
   try{
-    const r=await fetch(ORIGIN+'/api/gallery-buy',{method:'POST',headers:JSONH,body:JSON.stringify({email,item_id:gsel,width_mm:w,height_mm:h,circle,copies:+$('gcopies').value||1})});
+    const r=await fetch(ORIGIN+'/api/gallery-buy',{method:'POST',headers:JSONH,body:JSON.stringify({
+      email,item_id:gsel,width_mm:w,height_mm:h,circle,copies:+$('gcopies').value||1,
+      fmt:$('gfile').value,half_sheet:half})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
     setCredits(j.credits);out.className='msg ok';
-    out.innerHTML=`Готово. <a href="${ORIGIN+j.download_url}" download>Скачать PDF</a><br>Печатайте в масштабе 100%, не «по размеру страницы».`;
-    if(j.image){bought=j.image;$('gsand2').classList.remove('hide')}   // макет оплачен — можно доработать
+    const jpg=$('gfile').value==='jpg',zip=jpg&&j.sheets_count>1;
+    out.innerHTML=`Готово, листов: ${j.sheets_count}. <a href="${ORIGIN+j.download_url}" download>Скачать ${zip?'архив с JPG':(jpg?'JPG':'PDF')}</a>`
+      +`<br>Печатайте в масштабе 100%, не «по размеру страницы».`;
+    if(j.image){bought=j.image;$('gsand2').classList.remove('hide')}
   }catch(x){say(out,x.message,'err')}
   $('gbuy').disabled=false;
 };
