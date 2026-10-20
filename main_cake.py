@@ -7,6 +7,7 @@ import re
 import time
 import traceback
 import uuid
+import zipfile
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -246,6 +247,7 @@ class LayoutRequest(BaseModel):
     items: List[ItemConfig] = Field(min_length=1, max_length=50)
     email: str = Field(min_length=3, max_length=200)
     half_sheet: bool = False               # печатать на половинках листа A4
+    fmt: Literal["pdf", "jpg"] = "pdf"     # PDF или картинки листов в JPG
 
 
 def cleanup_old_files():
@@ -256,7 +258,7 @@ def cleanup_old_files():
             f.unlink(missing_ok=True)
 
 
-def make_pdf(entries, prefix="layout", half=False):
+def make_pdf(entries, prefix="layout", half=False, fmt="pdf"):
     """entries: [(картинка base64, type, size_cm, copies, outline_mm, circle, raw)] -> (файл, число листов)"""
     cleanup_old_files()
     items = []
@@ -270,8 +272,19 @@ def make_pdf(entries, prefix="layout", half=False):
                       "outline": rest[0] if rest else 0,
                       "circle": bool(rest[1]) if len(rest) > 1 else False,
                       "raw": bool(rest[2]) if len(rest) > 2 else False})
-    name = f"{prefix}_{os.urandom(8).hex()}.pdf"
     sheet = HALF_SHEET_MM if half else 297
+    stem = f"{prefix}_{os.urandom(8).hex()}"
+    if fmt == "jpg":
+        paths = A4LayoutEngine().generate_images(items, str(OUTPUT_DIR), stem, sheet_h_mm=sheet)
+        if len(paths) == 1:                       # один лист отдаём картинкой
+            return Path(paths[0]).name, 1
+        zip_name = f"{stem}.zip"                  # несколько листов — архивом
+        with zipfile.ZipFile(OUTPUT_DIR / zip_name, "w", zipfile.ZIP_DEFLATED) as z:
+            for i, p in enumerate(paths, 1):
+                z.write(p, f"list_{i}.jpg")
+                Path(p).unlink(missing_ok=True)
+        return zip_name, len(paths)
+    name = f"{stem}.pdf"
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
 
 
@@ -304,7 +317,8 @@ def config():
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
     entries = [(i.image_base64, i.type, i.size, i.copies, i.outline, i.circle, i.raw) for i in payload.items]
-    (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries, "layout", payload.half_sheet)
+    (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries, "layout",
+                                             payload.half_sheet, payload.fmt)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
 
 
@@ -516,13 +530,15 @@ async def export_print(p: ExactRequest):
 @app.get("/api/download/{filename}")
 def download_pdf(filename: str):
     # Раньше отдавался ЛЮБОЙ файл рядом с кодом, включая .env с ключами.
-    if not re.fullmatch(r"(?:layout|order)_[0-9a-f]{16}\.(?:pdf|jpg)", filename):
+    if not re.fullmatch(r"(?:layout|order)_[0-9a-f]{16}(?:_\d+)?\.(?:pdf|jpg|zip)", filename):
         raise HTTPException(status_code=404, detail="Файл не найден")
     path = OUTPUT_DIR / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Файл устарел — соберите макет заново")
     if path.suffix == ".jpg":
         return FileResponse(path, media_type="image/jpeg", filename="sugar_print_layout.jpg")
+    if path.suffix == ".zip":
+        return FileResponse(path, media_type="application/zip", filename="sugar_print_sheets.zip")
     return FileResponse(path, media_type="application/pdf", filename="sugar_print_layout.pdf")
 
 

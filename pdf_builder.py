@@ -259,9 +259,8 @@ class A4LayoutEngine:
         nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
         return img.resize((nw, nh), Image.Resampling.LANCZOS), nw, nh
 
-    def generate_pdf(self, items_config: list, output_pdf_path: str, sheet_h_mm: float = PAGE_H_MM) -> int:
-        """items_config: [{"image": PIL.Image, "type": "height|width|diameter", "size": см, "copies": n}]
-        Возвращает число листов A4."""
+    def _layout(self, items_config: list, sheet_h_mm: float):
+        """Раскладывает элементы по листам. Возвращает (страницы, группы, владельцы)."""
         rects, groups, owners = [], [], []   # уникальные картинки; owners[rid] -> индекс картинки
         # лист для укладки берём на один зазор больше: крайним элементам зазор по внешней
         # стороне не нужен, иначе в ряд не влезает лишняя колонка (12 кругов по 6 см уходили на 2 листа)
@@ -293,7 +292,12 @@ class A4LayoutEngine:
         pages = {}
         for b, x, y, w, h, rid in result:
             pages.setdefault(b, []).append((x, y, w, h, rid))
+        return pages, groups, owners
 
+    def generate_pdf(self, items_config: list, output_pdf_path: str, sheet_h_mm: float = PAGE_H_MM) -> int:
+        """items_config: [{"image": PIL.Image, "type": "height|width|diameter", "size": см, "copies": n}]
+        Возвращает число листов."""
+        pages, groups, owners = self._layout(items_config, sheet_h_mm)
         c = canvas.Canvas(output_pdf_path, pagesize=(PAGE_W_MM * mm, sheet_h_mm * mm))
         c.setTitle("Sugar print layout")
         page_h = sheet_h_mm * mm
@@ -313,6 +317,26 @@ class A4LayoutEngine:
                 c.drawImage(g[key], x_pt, y_pt, iw * PX_PT, ih * PX_PT, mask="auto")
         c.save()
         return len(pages)
+
+    def generate_images(self, items_config: list, out_dir, stem: str, sheet_h_mm: float = PAGE_H_MM) -> list:
+        """Та же раскладка, но листы сохраняются в JPG 300 DPI. Возвращает пути к файлам."""
+        pages, groups, owners = self._layout(items_config, sheet_h_mm)
+        sheet_w_px, sheet_h_px = round(PAGE_W_MM * MM_PX), round(sheet_h_mm * MM_PX)
+        paths = []
+        for i, b in enumerate(sorted(pages), 1):
+            sheet = Image.new("RGB", (sheet_w_px, sheet_h_px), (255, 255, 255))
+            for x, y, w, h, rid in pages[b]:
+                g = groups[owners[rid]]
+                rotated = (w, h) != (g["bw"], g["bh"])
+                img = g["img"].transpose(Image.Transpose.ROTATE_90) if rotated else g["img"]
+                px = round(self.margin_px + x + self.gap_px / 2)
+                py = round(self.margin_px + y + self.gap_px / 2)
+                sheet.paste(img, (px, py), img.getchannel("A"))
+            self._draw_marks_image(sheet)
+            path = f"{out_dir}/{stem}_{i}.jpg" if len(pages) > 1 else f"{out_dir}/{stem}.jpg"
+            sheet.save(path, "JPEG", quality=95, dpi=(DPI, DPI))
+            paths.append(path)
+        return paths
 
     @staticmethod
     def fit_exact(img, w_mm, h_mm, circle):

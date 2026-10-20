@@ -342,6 +342,15 @@ dialog::backdrop{background:rgba(43,33,64,.45)}
         <button id="senhance" class="ghost"></button>
         <span class="msg grow">ИИ аккуратно улучшит качество макета, сохранив композицию и надписи.</span>
       </div>
+      <div id="txtedit" class="sbrow hide">
+        <b style="font-size:13px;width:100%">Правка выбранной надписи</b>
+        <input id="txtval" maxlength="60" style="flex:1;min-width:160px">
+        <select id="txtarc" style="width:auto">
+          <option value="0">Прямая</option><option value="1">Дуга вверх</option><option value="-1">Дуга вниз</option>
+        </select>
+        <label style="flex:1;min-width:140px">Изгиб<input id="txtcurve" type="range" min="20" max="100" value="55"></label>
+        <input id="txtcolor" type="color" style="width:54px;height:38px;padding:3px">
+      </div>
       <div class="sbrow">
         <button id="setadd" class="ghost">Добавить текущий макет в набор</button>
         <button id="setprint" class="main hide"></button>
@@ -939,11 +948,11 @@ function sbDraw(){
     bx.strokeStyle='#d6336c';bx.lineWidth=2;bx.setLineDash([6,4]);bx.strokeRect(-o.w/2,-o.h/2,o.w,o.h);bx.setLineDash([]);
     bx.fillStyle='#d6336c';bx.fillRect(o.w/2-9,o.h/2-9,18,18);bx.restore()}
 }
-function sbAdd(src,title){
+function sbAdd(src,title,meta){
   const img=new Image();
   img.onload=()=>{
     const k=Math.min(bd.width*0.4/img.width,bd.height*0.4/img.height);
-    const o={img,title:title||'',x:bd.width/2,y:bd.height/2,w:img.width*k,h:img.height*k,rot:0,flip:false};
+    const o={img,title:title||'',x:bd.width/2,y:bd.height/2,w:img.width*k,h:img.height*k,rot:0,flip:false,txt:meta||null};
     SB.objs.push(o);SB.sel=o;sbSyncSliders();sbDraw();
   };
   img.onerror=()=>say($('sout'),'Не удалось открыть картинку','err');
@@ -1032,7 +1041,8 @@ $('saddtext').onclick=()=>{
   if(!t)return say($('sout'),'Введите текст надписи.','err');
   const dir=+$('sarc').value,font=$('sfont').value,color=$('scolor').value;
   const c=dir===0?textStraight(t,font,color):textArc(t,font,color,dir,+$('sarcv').value);
-  sbAdd(c.toDataURL('image/png'),t);
+  // параметры храним у объекта: надпись можно править прямо на макете
+  sbAdd(c.toDataURL('image/png'),t,{text:t,font,color,dir,curve:+$('sarcv').value});
   say($('sout'),dir===0?'Надпись добавлена — перетащите её на место.'
     :'Надпись по дуге добавлена. Меняется ползунком «Изгиб дуги» — добавьте заново.','ok');
 };
@@ -1107,7 +1117,7 @@ $('setprint').onclick=async()=>{
   if(!confirm(`Все макеты набора разложатся по листам. Спишется ${PRICE.pdf} кр. Продолжить?`))return;
   $('setprint').disabled=true;say(out,'Собираю набор…');
   try{
-    const body={email,half_sheet:$('ssheet').value==='1',items:mset.map(m=>({
+    const body={email,half_sheet:$('ssheet').value==='1',fmt:$('sfile').value,items:mset.map(m=>({
       image_base64:m.src,type:m.round?'diameter':'width',size:m.w/10,copies:+m.copies||1,
       outline:0,circle:m.round,raw:true}))};
     const r=await fetch(ORIGIN+'/api/generate-pdf',{method:'POST',headers:JSONH,body:JSON.stringify(body)});
@@ -1143,7 +1153,7 @@ function hit(x,y){
 let sdrag=null;
 bd.onpointerdown=e=>{
   const [x,y]=bpt(e),h=hit(x,y);
-  if(!h){SB.sel=null;sbDraw();return}
+  if(!h){SB.sel=null;sbSyncSliders();sbDraw();return}
   SB.sel=h.o;sbSyncSliders();
   const corner=h.lx>h.o.w/2-20&&h.ly>h.o.h/2-20;
   sdrag={mode:corner?'size':'move',x,y,w:h.o.w,h:h.o.h};
@@ -1158,8 +1168,24 @@ bd.onpointermove=e=>{
   sbDraw();
 };
 bd.onpointerup=()=>{sdrag=null};
+function txtRedraw(){
+  /* Перерисовываем выбранную надпись: текст, дуга и цвет меняются прямо на макете. */
+  const o=SB.sel;if(!o||!o.txt)return;
+  o.txt.text=$('txtval').value||o.txt.text;
+  o.txt.dir=+$('txtarc').value;o.txt.curve=+$('txtcurve').value;o.txt.color=$('txtcolor').value;
+  const c=o.txt.dir===0?textStraight(o.txt.text,o.txt.font,o.txt.color)
+                       :textArc(o.txt.text,o.txt.font,o.txt.color,o.txt.dir,o.txt.curve);
+  const img=new Image();
+  img.onload=()=>{const k=o.w/o.img.width||1;o.img=img;o.w=img.width*k;o.h=img.height*k;sbDraw()};
+  img.src=c.toDataURL('image/png');
+}
+$('txtval').oninput=txtRedraw;$('txtarc').onchange=txtRedraw;
+$('txtcurve').oninput=txtRedraw;$('txtcolor').oninput=txtRedraw;
 function sbSyncSliders(){
-  const o=SB.sel;if(!o)return;
+  const o=SB.sel;
+  $('txtedit').classList.toggle('hide',!(o&&o.txt));     // панель правки только для надписей
+  if(o&&o.txt){$('txtval').value=o.txt.text;$('txtarc').value=o.txt.dir;$('txtcurve').value=o.txt.curve;$('txtcolor').value=o.txt.color}
+  if(!o)return;
   $('ssize').value=Math.round(Math.min(200,o.w/bd.width*100));
   $('srot').value=Math.round(o.rot);
 }
@@ -1169,7 +1195,7 @@ $('srot').oninput=e=>{if(!SB.sel)return;SB.sel.rot=+e.target.value;sbDraw()};
 $('sup').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>=0&&i<SB.objs.length-1){SB.objs.splice(i,1);SB.objs.splice(i+1,0,SB.sel);sbDraw()}};
 $('sdown').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>0){SB.objs.splice(i,1);SB.objs.splice(i-1,0,SB.sel);sbDraw()}};
 $('sflip').onclick=()=>{if(SB.sel){SB.sel.flip=!SB.sel.flip;sbDraw()}};
-$('sdup').onclick=()=>{const o=SB.sel;if(!o)return;const c={...o,x:o.x+20,y:o.y+20};SB.objs.push(c);SB.sel=c;sbDraw()};
+$('sdup').onclick=()=>{const o=SB.sel;if(!o)return;const c={...o,x:o.x+20,y:o.y+20,txt:o.txt?{...o.txt}:null};SB.objs.push(c);SB.sel=c;sbSyncSliders();sbDraw()};
 $('sdel').onclick=()=>{const i=SB.objs.indexOf(SB.sel);if(i>=0){SB.objs.splice(i,1);SB.sel=null;sbDraw()}};
 $('sclear').onclick=()=>{if(SB.objs.length&&confirm('Убрать все объекты с макета?')){SB.objs=[];SB.sel=null;sbDraw()}};
 /* печать: пересобираем макет в 300 DPI и отправляем на сервер */
@@ -1251,15 +1277,15 @@ $('sprint').onclick=async()=>{
     const img=sbRender300(),many=$('smode').value==='many',half=$('ssheet').value==='1';
     const url=many?'/api/generate-pdf':'/api/export-print';
     const body=many
-      ? {email,half_sheet:half,items:[{image_base64:img,type:SB.round?'diameter':'width',size:SB.w/10,
+      ? {email,half_sheet:half,fmt:$('sfile').value,items:[{image_base64:img,type:SB.round?'diameter':'width',size:SB.w/10,
           copies:+$('scopies').value||1,outline:0,circle:SB.round,raw:true}]}   // raw: готовый макет не обрезаем
       : {email,image_base64:img,width_mm:SB.w,height_mm:SB.h,circle:SB.round,fmt:$('sfile').value,half_sheet:half};
     const r=await fetch(ORIGIN+url,{method:'POST',headers:JSONH,body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
     setCredits(j.credits);out.className='msg ok';
-    const jpg=!many&&$('sfile').value==='jpg';
-    out.innerHTML=`Готово${jpg?'':`, листов: ${j.sheets_count}`}. <a href="${ORIGIN+j.download_url}" download>Скачать ${jpg?'JPG':'PDF'}</a>`
+    const jpg=$('sfile').value==='jpg',zip=jpg&&j.sheets_count>1;
+    out.innerHTML=`Готово, листов: ${j.sheets_count}. <a href="${ORIGIN+j.download_url}" download>Скачать ${zip?'архив с JPG':(jpg?'JPG':'PDF')}</a>`
       +`<br>Печатайте в масштабе 100%, не «по размеру страницы».`;
   }catch(x){say(out,x.message,'err')}
   $('sprint').disabled=false;
