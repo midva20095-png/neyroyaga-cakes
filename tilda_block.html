@@ -337,6 +337,9 @@
           </select></label>
         </div>
         <p class="msg">Половина листа — для печати на остатках бумаги. Макет должен быть не выше 148 мм.</p>
+        <label style="display:flex;gap:6px;align-items:center;font-weight:600">
+          <input id="ny-scut" type="checkbox" checked style="width:auto"> линия реза по краю макета
+        </label>
         <label>Фон макета (печатается как есть, обычно белый)<input id="ny-sbg" type="color" value="#ffffff" style="height:42px;padding:4px"></label>
         <div class="sbrow">
           <button id="ny-sown" class="ghost">Добавить свою картинку</button>
@@ -431,6 +434,9 @@
           <h3>🖨 Формат файла и лист</h3>
           <p>PDF подходит для печати из любой программы. JPG — та же страница картинкой в 300 DPI, удобно для телефона и чужого компьютера. Если листов получается несколько, JPG приходит архивом: внутри отдельная картинка на каждый лист.</p>
           <p>Лист бывает целый A4 (210×297 мм) и половина (210×148 мм). Половина нужна, чтобы печатать на остатках дорогой сахарной бумаги. Макет выше 148 мм на половину не помещается, сервис об этом предупредит.</p>
+
+          <h3>✂️ Линия реза</h3>
+          <p>По краю макета печатается тонкая серая линия: на белой бумаге без неё не видно, где заканчивается круг. Галочку «линия реза по краю макета» можно снять, если режете по своим меткам или печатаете макет с готовой рамкой.</p>
 
           <h3>Как печатать</h3>
           <p>Печатайте в масштабе 100% («Фактический размер»), не «по размеру страницы», иначе сантиметры уедут. На каждом листе внизу есть линейка 100 мм — приложите к распечатке и проверьте.</p>
@@ -544,6 +550,10 @@
   <div class="f2">
     <label>Файл<select id="ny-gfile"><option value="pdf">PDF</option><option value="jpg">JPG 300 DPI</option></select></label>
     <label>Лист<select id="ny-gsheet"><option value="0">Целый A4</option><option value="1">Половина A4</option></select></label>
+  </div>
+  <div class="f2">
+    <label style="display:flex;gap:6px;align-items:center;font-weight:600">
+      <input id="ny-gcut" type="checkbox" checked style="width:auto"> линия реза</label>
   </div>
   <div class="sbrow">
     <button id="ny-gbuy" class="main"></button>
@@ -851,6 +861,7 @@ $('ny-refin').onchange=async e=>{
 /* ---- генерация ИИ (WebSocket) ---- */
 function setBusy(b){busy=b;[$('ny-gen'),$('ny-cut'),$('ny-bggo'),$('ny-senhance')].forEach(x=>x.disabled=b);labels()}
 function connect(){
+  if(ws){try{ws.onclose=null;ws.close()}catch{}}     // закрываем прежнее: иначе их копится несколько
   ws=new WebSocket(`${WS_ORIGIN}/ws/${encodeURIComponent(email)}`);
   ws.onopen=()=>{retry=0;say($('ny-st'),'Соединение с сервером установлено.','ok')};
   ws.onerror=()=>say($('ny-st'),'Ошибка соединения с сервером.','err');
@@ -1064,7 +1075,7 @@ $('ny-gbuy').onclick=async()=>{
   try{
     const r=await fetch(ORIGIN+'/api/gallery-buy',{method:'POST',headers:JSONH,body:JSON.stringify({
       email,item_id:gsel,width_mm:w,height_mm:h,circle,copies:+$('ny-gcopies').value||1,
-      fmt:$('ny-gfile').value,half_sheet:half})});
+      fmt:$('ny-gfile').value,half_sheet:half,cutline:$('ny-gcut').checked})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
     setCredits(j.credits);out.className='msg ok';
@@ -1294,7 +1305,7 @@ $('ny-setprint').onclick=async()=>{
   try{
     const body={email,half_sheet:$('ny-ssheet').value==='1',fmt:$('ny-sfile').value,items:mset.map(m=>({
       image_base64:m.src,type:m.round?'diameter':'width',size:m.w/10,copies:+m.copies||1,
-      outline:0,circle:m.round,raw:true}))};
+      outline:0,circle:m.round,raw:true,cutline:$('ny-scut').checked}))};
     const r=await fetch(ORIGIN+'/api/generate-pdf',{method:'POST',headers:JSONH,body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}
@@ -1453,8 +1464,9 @@ $('ny-sprint').onclick=async()=>{
     const url=many?'/api/generate-pdf':'/api/export-print';
     const body=many
       ? {email,half_sheet:half,fmt:$('ny-sfile').value,items:[{image_base64:img,type:SB.round?'diameter':'width',size:SB.w/10,
-          copies:+$('ny-scopies').value||1,outline:0,circle:SB.round,raw:true}]}   // raw: готовый макет не обрезаем
-      : {email,image_base64:img,width_mm:SB.w,height_mm:SB.h,circle:SB.round,fmt:$('ny-sfile').value,half_sheet:half};
+          copies:+$('ny-scopies').value||1,outline:0,circle:SB.round,raw:true,cutline:$('ny-scut').checked}]}
+      : {email,image_base64:img,width_mm:SB.w,height_mm:SB.h,circle:SB.round,fmt:$('ny-sfile').value,
+         half_sheet:half,cutline:$('ny-scut').checked};
     const r=await fetch(ORIGIN+url,{method:'POST',headers:JSONH,body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){if(r.status===402)openTopup();throw new Error(err(j))}

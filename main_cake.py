@@ -8,6 +8,8 @@ import time
 import traceback
 import uuid
 import zipfile
+import gc
+import ctypes
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -27,7 +29,8 @@ from pdf_builder import A4LayoutEngine
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "generated"  # PDF отдельно от кода и .env
+# Папку для готовых файлов можно вынести на постоянный диск: OUTPUT_DIR=/data/generated
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR") or BASE_DIR / "generated")  # PDF отдельно от кода и .env
 OUTPUT_DIR.mkdir(exist_ok=True)
 # Галерея готовых макетов: просто положите картинки в папку gallery рядом с кодом.
 # Имя файла становится названием: "Единорог с шарами.png" -> «Единорог с шарами».
@@ -241,6 +244,7 @@ class ItemConfig(BaseModel):
     outline: float = Field(default=0, ge=0, le=5)  # белая обводка под вырезание, мм
     circle: bool = False                           # круглый топпер (капкейки)
     raw: bool = False                              # готовый макет: не трогать фон и поля
+    cutline: bool = False                          # тонкая линия по краю: видно, где резать
 
 
 class LayoutRequest(BaseModel):
@@ -271,7 +275,8 @@ def make_pdf(entries, prefix="layout", half=False, fmt="pdf"):
         items.append({"image": img, "type": typ, "size": size, "copies": copies,
                       "outline": rest[0] if rest else 0,
                       "circle": bool(rest[1]) if len(rest) > 1 else False,
-                      "raw": bool(rest[2]) if len(rest) > 2 else False})
+                      "raw": bool(rest[2]) if len(rest) > 2 else False,
+                      "cutline": bool(rest[3]) if len(rest) > 3 else False})
     sheet = HALF_SHEET_MM if half else 297
     stem = f"{prefix}_{os.urandom(8).hex()}"
     if fmt == "jpg":
@@ -286,6 +291,16 @@ def make_pdf(entries, prefix="layout", half=False, fmt="pdf"):
         return zip_name, len(paths)
     name = f"{stem}.pdf"
     return name, A4LayoutEngine().generate_pdf(items, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+
+
+def release_memory():
+    """Отдаёт системе память после тяжёлой работы с картинками.
+    Python освобождает объекты, но не всегда возвращает память ОС — отсюда рост RSS."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)      # на Linux-контейнерах возвращает кучу системе
+    except Exception:
+        pass
 
 
 async def paid_job(email: str, kind: str, fn, *args):
@@ -307,6 +322,8 @@ async def paid_job(email: str, kind: str, fn, *args):
             raise HTTPException(status_code=400, detail=str(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Внутренняя ошибка, кредиты возвращены")
+    finally:
+        await asyncio.to_thread(release_memory)
 
 
 @app.get("/api/config")
@@ -316,7 +333,7 @@ def config():
 
 @app.post("/api/generate-pdf")  # набор наклеек на листах A4 (платно)
 async def generate_pdf_endpoint(payload: LayoutRequest):
-    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline, i.circle, i.raw) for i in payload.items]
+    entries = [(i.image_base64, i.type, i.size, i.copies, i.outline, i.circle, i.raw, i.cutline) for i in payload.items]
     (name, sheets), credits = await paid_job(payload.email, "pdf", make_pdf, entries, "layout",
                                              payload.half_sheet, payload.fmt)
     return {"success": True, "sheets_count": sheets, "download_url": f"/api/download/{name}", "credits": credits}
@@ -448,6 +465,7 @@ class GalleryBuy(BaseModel):
     copies: int = Field(default=1, ge=1, le=100)
     fmt: Literal["pdf", "jpg"] = "pdf"
     half_sheet: bool = False
+    cutline: bool = True
 
 
 def make_gallery_pdf(p: GalleryBuy):
@@ -476,10 +494,10 @@ def make_gallery_pdf(p: GalleryBuy):
         return name, engine.generate_pdf(items, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
     if p.fmt == "jpg":
         name = f"{stem}.jpg"
-        engine.export_jpg(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+        engine.export_jpg(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet, cutline=p.cutline)
     else:
         name = f"{stem}.pdf"
-        engine.export_exact(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+        engine.export_exact(img, p.width_mm, h_mm, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet, cutline=p.cutline)
     return name, 1
 
 
@@ -521,6 +539,7 @@ class ExactRequest(BaseModel):
     circle: bool = False
     fmt: Literal["pdf", "jpg"] = "pdf"      # PDF для печати или JPG-картинка 300 DPI
     half_sheet: bool = False
+    cutline: bool = True                    # линия по краю макета
 
 
 def make_exact(p: ExactRequest) -> str:
@@ -535,9 +554,9 @@ def make_exact(p: ExactRequest) -> str:
     engine = A4LayoutEngine()
     sheet = HALF_SHEET_MM if p.half_sheet else 297
     if p.fmt == "jpg":                      # тот же лист, только картинкой
-        engine.export_jpg(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+        engine.export_jpg(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet, cutline=p.cutline)
     else:
-        engine.export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet)
+        engine.export_exact(img, p.width_mm, h, p.circle, str(OUTPUT_DIR / name), sheet_h_mm=sheet, cutline=p.cutline)
     return name
 
 
@@ -708,6 +727,8 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
             try:  # Gemini — блокирующий вызов: в потоке, иначе замирают все пользователи
                 print(f"🎨 {mode} для {client_email}: текст={len(prompt)} симв., образцов={len(refs)}, списано {cost} кр.")
                 image_b64, mime = await asyncio.to_thread(generate_art, prompt, file_obj, style, refs, mode, ratio)
+
+                await asyncio.to_thread(release_memory)       # картинки от ИИ тоже освобождаем
             except Exception as e:
                 print(f"❌ Генерация: {e}")
                 await add_credits(client_email, cost, "refund:" + op)

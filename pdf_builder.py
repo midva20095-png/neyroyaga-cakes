@@ -230,7 +230,7 @@ class A4LayoutEngine:
         return disc
 
     def prepare_image(self, img_input, size_type: str, target_size_cm: float, outline_mm: float = 0.0,
-                      circle: bool = False, raw: bool = False):
+                      circle: bool = False, raw: bool = False, cutline: bool = False):
         """Trim + пропорциональный ресайз под сантиметры (300 DPI).
         circle=True — фигурка вписывается в круглый топпер заданного диаметра.
         raw=True — готовый макет из песочницы: фон не убираем и поля не режем, иначе собьётся размер."""
@@ -244,6 +244,8 @@ class A4LayoutEngine:
             target = max(1, round(target_size_cm * CM_PX))
             disc = self.to_circle(img, target)
             return disc, target, target
+        if cutline and not circle:
+            img = self.draw_cutline(img, False)
         if outline_mm > 0:
             img = self.add_outline(img, round(outline_mm * MM_PX))
         w, h = img.size
@@ -272,7 +274,7 @@ class A4LayoutEngine:
         for n, cfg in enumerate(items_config, 1):
             img, w, h = self.prepare_image(cfg["image"], cfg["type"], cfg["size"],
                                            float(cfg.get("outline", 0) or 0), bool(cfg.get("circle")),
-                                           bool(cfg.get("raw")))
+                                           bool(cfg.get("raw")), bool(cfg.get("cutline")))
             bw, bh = w + self.gap_px, h + self.gap_px
             fits = (bw <= bin_w and bh <= bin_h) or (bh <= bin_w and bw <= bin_h)
             if not fits:
@@ -339,6 +341,21 @@ class A4LayoutEngine:
         return paths
 
     @staticmethod
+    def draw_cutline(img, circle):
+        """Тонкая серая линия по краю макета: на белой бумаге видно, где резать."""
+        w, h = img.size
+        line = Image.new("RGBA", (w * 2, h * 2), (0, 0, 0, 0))
+        d = ImageDraw.Draw(line)
+        width = max(4, round(min(w, h) * 2 * 0.0025))
+        box = (width, width, w * 2 - width - 1, h * 2 - width - 1)
+        if circle:
+            d.ellipse(box, outline=(140, 140, 140, 255), width=width)
+        else:
+            d.rectangle(box, outline=(140, 140, 140, 255), width=width)
+        img.alpha_composite(line.resize((w, h), Image.Resampling.LANCZOS))
+        return img
+
+    @staticmethod
     def fit_exact(img, w_mm, h_mm, circle):
         """Картинка точного размера: круг обрезается по центру, прямоугольник вписывается."""
         img = img.convert("RGBA")
@@ -357,13 +374,15 @@ class A4LayoutEngine:
         out.alpha_composite(img.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
         return out
 
-    def export_jpg(self, img, w_mm, h_mm, circle, output_path, sheet_h_mm=PAGE_H_MM, dpi=DPI):
+    def export_jpg(self, img, w_mm, h_mm, circle, output_path, sheet_h_mm=PAGE_H_MM, dpi=DPI, cutline=True):
         """Лист для печати в JPG 300 DPI: макет точного размера по центру листа —
         то же, что и PDF, только картинкой. Круг остаётся кругом, лишнего не добавляем."""
         if w_mm > PAGE_W_MM or h_mm > sheet_h_mm:
             raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на лист "
                              f"{PAGE_W_MM:g}×{sheet_h_mm:g} мм")
         fitted = self.fit_exact(img, w_mm, h_mm, circle)
+        if cutline:
+            fitted = self.draw_cutline(fitted, circle)
         sheet = Image.new("RGB", (round(PAGE_W_MM * MM_PX), round(sheet_h_mm * MM_PX)), (255, 255, 255))
         sheet.paste(fitted, ((sheet.width - fitted.width) // 2, (sheet.height - fitted.height) // 2),
                     fitted.getchannel("A"))
@@ -382,12 +401,14 @@ class A4LayoutEngine:
             x = x0 + round(i * 10 * MM_PX)
             d.line([(x, y), (x, y - round((2 if i % 5 == 0 else 1.2) * MM_PX))], fill=(120, 120, 120), width=3)
 
-    def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path, sheet_h_mm=PAGE_H_MM):
+    def export_exact(self, img, w_mm, h_mm, circle, output_pdf_path, sheet_h_mm=PAGE_H_MM, cutline=True):
         """Один макет точного размера (в мм) по центру A4. Круг — с круглой обрезкой, остальное — вписывается без искажений."""
         if w_mm > PAGE_W_MM or h_mm > sheet_h_mm:
             raise ValueError(f"Макет {w_mm:g}×{h_mm:g} мм не помещается на лист "
                              f"{PAGE_W_MM:g}×{sheet_h_mm:g} мм")
         fitted = self.fit_exact(img, w_mm, h_mm, circle)
+        if cutline:
+            fitted = self.draw_cutline(fitted, circle)
         page = (PAGE_W_MM * mm, sheet_h_mm * mm)
         c = canvas.Canvas(output_pdf_path, pagesize=page)
         c.setTitle("Sugar print exact size")
