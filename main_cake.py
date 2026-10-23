@@ -689,11 +689,12 @@ async def websocket_endpoint(websocket: WebSocket, client_email: str):
     async def send(text, credits, type_="text", done=True, **extra):
         await websocket.send_text(json.dumps({"type": type_, "credits": credits, "text": text, "done": done, **extra}))
 
-    first = await deduct(client_email, 0)
-    balance = first["credits"]
-    await send("⚠️ Таблица с балансом не отвечает, обновите страницу." if first.get("unavailable")
-               else "🎂 Добро пожаловать в студию макетов!", balance)
     try:
+        first = await deduct(client_email, 0)
+        balance = first["credits"]
+        # приветствие шлём внутри try: клиент мог закрыть вкладку, пока ходили в таблицу
+        await send("⚠️ Таблица с балансом не отвечает, обновите страницу." if first.get("unavailable")
+                   else "🎂 Добро пожаловать в студию макетов!", balance)
         while True:
             raw = await websocket.receive_text()
             prompt, file_obj, style, refs, mode, ratio = raw.strip()[:500], None, "", [], "art", ""
