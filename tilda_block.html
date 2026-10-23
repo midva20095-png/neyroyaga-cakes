@@ -507,6 +507,9 @@
         <button id="ny-ownbtn" class="ghost">Добавить свои картинки</button>
         <input id="ny-own" type="file" accept="image/*" multiple hidden>
       </div>
+      <label style="display:flex;gap:6px;align-items:center;font-weight:600;margin-bottom:6px">
+        <input id="ny-pcut" type="checkbox" checked style="width:auto"> линия реза у прямоугольных деталей без канта
+      </label>
       <label>Что скачать
         <select id="ny-mode"><option value="sheet">Набор наклеек на листах A4</option><option value="cupcakes">Сетка под капкейки: 12 круглых топперов по 6 см</option><option value="exact">Один макет точного размера по центру A4</option></select>
       </label>
@@ -527,13 +530,18 @@
   </main>
   <div id="ny-galwrap">
     <section class="paper">
-      <div class="bar"><h2 class="grow">Галерея готовых макетов</h2><span id="ny-galcount" class="msg"></span></div>
-      <p id="ny-galmsg" class="msg">Загружаю…</p>
-      <div class="f2">
-        <label>Поиск<input id="ny-galsearch" placeholder="Имя, тема, праздник…"></label>
-        <label>Размер карточек<input id="ny-galsize" type="range" min="130" max="320" value="190"></label>
+      <div class="bar">
+        <button id="ny-galtoggle" class="main grow" style="text-align:left">🛒 Галерея готовых макетов</button>
+        <span id="ny-galcount" class="msg"></span>
       </div>
-      <div id="ny-gal" class="gal"></div>
+      <div id="ny-galbody" class="hide">
+        <p id="ny-galmsg" class="msg">Загружаю…</p>
+        <div class="f2">
+          <label>Поиск<input id="ny-galsearch" placeholder="Имя, тема, праздник…"></label>
+          <label>Размер карточек<input id="ny-galsize" type="range" min="130" max="320" value="190"></label>
+        </div>
+        <div id="ny-gal" class="gal"></div>
+      </div>
     </section>
   </div>
 
@@ -611,7 +619,7 @@ $('ny-loginf').onsubmit=async e=>{
     if(!j.success)return say($('ny-lmsg'),j.error||'Неверная почта или пароль.','err');
     email=em;try{localStorage.setItem('ny_email',em)}catch{}
     const c=await fetch(ORIGIN+'/api/config').then(r=>r.json()).catch(()=>null);if(c)PRICE=c.prices;
-    $('ny-login').classList.add('hide');$('ny-app').classList.remove('hide');labels();connect();loadGallery();
+    $('ny-login').classList.add('hide');$('ny-app').classList.remove('hide');labels();connect();
   }catch{say($('ny-lmsg'),'Сервер недоступен. Попробуйте ещё раз.','err')}
 };
 $('ny-logout').onclick=()=>{email='';ws&&ws.close();location.reload()};
@@ -970,7 +978,8 @@ $('ny-build').onclick=async()=>{
     if(bad>=0)return say(out,`Картинка №${bad+1}: размер от 1 до 26.9 см, копий от 1 до 100.`,'err');
     url='/api/generate-pdf';body={email,items:items.map(i=>({image_base64:i.src,
       type:cup?'diameter':i.type,size:cup?6:+i.size,copies:cup?Math.ceil(12/items.length):+i.copies,
-      outline:(cup||+i.circle)?0:(+i.outline?2.5:0),circle:cup||!!+i.circle}))};
+      outline:(cup||+i.circle)?0:(+i.outline?2.5:0),circle:cup||!!+i.circle,
+      cutline:$('ny-pcut').checked&&!cup&&!+i.circle&&!+i.outline}))};   // у круга и у канта граница видна и так
   }
   if(!confirm(`С баланса спишется ${PRICE.pdf} кр. за готовый PDF. Продолжить?`))return;
   $('ny-build').disabled=true;say(out,'Собираю PDF…');
@@ -1004,6 +1013,12 @@ $('ny-packs').onclick=async e=>{
 };
 /* ---- галерея готовых макетов: карточки с кнопками ---- */
 let gsel=null,glist=[],bought=null;
+$('ny-galtoggle').onclick=()=>{
+  const open=!$('ny-galbody').classList.toggle('hide');      // первое открытие подгружает макеты
+  $('ny-galtoggle').textContent=open?'🛒 Галерея готовых макетов — свернуть':'🛒 Галерея готовых макетов';
+  if(open&&!glist.length)loadGallery();
+  if(open)$('ny-galbody').scrollIntoView({behavior:'smooth',block:'nearest'});
+};
 async function loadGallery(){
   try{
     glist=await fetch(ORIGIN+'/api/gallery').then(r=>r.json());

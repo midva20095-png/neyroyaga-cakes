@@ -218,8 +218,13 @@ async def sheet(payload: dict, timeout: int = 20, tries: int = 3):
     return {"success": False, "unavailable": True}
 
 
+def norm_email(value) -> str:
+    """Почта без регистра и пробелов: иначе Vasya@mail.ru и vasya@mail.ru — два разных счёта."""
+    return str(value or "").strip().lower()
+
+
 async def deduct(email: str, cost: int, request_id: str = None) -> dict:
-    res = await sheet({"action": "deduct", "email": (email or "").strip(), "cost": cost, "request_id": request_id})
+    res = await sheet({"action": "deduct", "email": norm_email(email), "cost": cost, "request_id": request_id})
     if res is None:
         return {"success": True, "credits": 999}
     if res.get("unavailable"):
@@ -228,7 +233,7 @@ async def deduct(email: str, cost: int, request_id: str = None) -> dict:
 
 
 async def add_credits(email: str, amount: int, request_id: str = None) -> bool:
-    res = await sheet({"action": "add", "email": (email or "").strip(), "amount": amount, "request_id": request_id}, 20)
+    res = await sheet({"action": "add", "email": norm_email(email), "amount": amount, "request_id": request_id}, 20)
     ok = res is None or res.get("success", True) is not False
     if not ok:
         print(f"⚠️ НЕ УДАЛОСЬ начислить {amount} кр. для {email} — поправьте баланс в таблице вручную")
@@ -305,7 +310,7 @@ def release_memory():
 
 async def paid_job(email: str, kind: str, fn, *args):
     """Списывает кредиты, делает работу в потоке, при любой ошибке возвращает кредиты."""
-    email = (email or "").strip()
+    email = norm_email(email)
     if not email:
         raise HTTPException(status_code=401, detail="Войдите в аккаунт")
     op = uuid.uuid4().hex
@@ -679,6 +684,7 @@ def generate_art(prompt: str, file_obj, style: str = "", refs=None, mode: str = 
 @app.websocket("/ws/{client_email}")
 async def websocket_endpoint(websocket: WebSocket, client_email: str):
     await websocket.accept()
+    client_email = norm_email(client_email)      # адрес из ссылки тоже приводим к нижнему регистру
 
     async def send(text, credits, type_="text", done=True, **extra):
         await websocket.send_text(json.dumps({"type": type_, "credits": credits, "text": text, "done": done, **extra}))
@@ -752,7 +758,7 @@ async def authenticate_user(request: Request):
     if not GOOGLE_SCRIPT_URL:
         return {"success": True}
     data = await request.json()
-    res = await sheet({"action": "auth", "email": data.get("email"), "password": data.get("password")})
+    res = await sheet({"action": "auth", "email": norm_email(data.get("email")), "password": data.get("password")})
     if isinstance(res, dict) and res.get("unavailable"):
         return {"success": False, "error": "Сервис входа временно недоступен. Повторите через минуту."}
     return res if isinstance(res, dict) else {"success": False}
@@ -767,7 +773,7 @@ def packs():
 async def create_payment_endpoint(request: Request):
     try:
         data = await request.json()
-        email = str(data.get("email") or "").strip()
+        email = norm_email(data.get("email"))
         credits = int(data.get("credits") or 0)
         amount = CREDIT_PACKS.get(credits)
         if not email or amount is None:
@@ -794,9 +800,29 @@ async def create_payment_endpoint(request: Request):
         return {"success": False, "error": str(e)}
 
 
+# В ЮKassa на один магазин можно задать только один адрес уведомлений. Если он уже занят
+# магазином Tilda, укажите в кассе наш адрес, а в TILDA_WEBHOOK_URL — адрес Tilda:
+# уведомления будут приходить сюда и пересылаться дальше, работать будут оба магазина.
+TILDA_WEBHOOK_URL = os.getenv("TILDA_WEBHOOK_URL", "").strip()
+
+
+def forward_to_tilda(body: bytes, content_type: str):
+    """Пересылает уведомление дальше, в магазин Tilda. Ошибки не мешают нашей оплате."""
+    if not TILDA_WEBHOOK_URL:
+        return
+    try:
+        requests.post(TILDA_WEBHOOK_URL, data=body,
+                      headers={"Content-Type": content_type or "application/json"}, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Не удалось переслать уведомление в Tilda: {e}")
+
+
 @app.post("/api/yookassa-webhook")
 async def yookassa_webhook(request: Request):
-    event = await request.json()
+    raw = await request.body()
+    # сначала отдаём копию магазину Tilda: его заказы не должны зависеть от нашей обработки
+    await asyncio.to_thread(forward_to_tilda, raw, request.headers.get("content-type", ""))
+    event = json.loads(raw or b"{}")
     pid = str((event.get("object") or {}).get("id") or "")
     if event.get("event") != "payment.succeeded" or not YOOKASSA_SHOP_ID:
         return {"status": "ok"}
